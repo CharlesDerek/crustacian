@@ -1,4 +1,4 @@
-# 🦀 **Project Crustacean**
+# 🦀 **Project Crustacian**
 
 ### **A cross-platform Rust CLI to install, update, and drive ClamAV + FreshClam on Windows, macOS, and Linux.**
 
@@ -10,7 +10,7 @@
 
 ## 🌐 Overview
 
-**Crustacean** is an open-source, vendor-neutral command-line tool written in **Rust**, designed to simplify deployment and operation of the **ClamAV** antivirus engine across multiple operating systems.
+**Crustacian** is an open-source, vendor-neutral command-line tool written in **Rust**, designed to simplify deployment and operation of the **ClamAV** antivirus engine across multiple operating systems.
 
 It provides a consistent, secure, and predictable interface for:
 
@@ -20,7 +20,7 @@ It provides a consistent, secure, and predictable interface for:
 * Viewing detailed results with throughput, progress, and ETA metrics
 * Exporting structured logs for integration into SIEM/SOAR/automation pipelines
 
-Crustacean is designed for **individuals, developers, sysadmins, SOC teams, and enterprise environments** where cross-platform consistency and automation matter.
+Crustacian is designed for **individuals, developers, sysadmins, SOC teams, and enterprise environments** where cross-platform consistency and automation matter.
 
 ---
 
@@ -45,7 +45,7 @@ Crustacean is designed for **individuals, developers, sysadmins, SOC teams, and 
 
 * Rust **1.75+**
 * Windows 10/11, macOS Ventura+, or any modern Linux distribution
-* ClamAV installed (Crustacean can assist with this)
+* ClamAV installed (Crustacian can assist with this)
 
 ---
 
@@ -54,8 +54,8 @@ Crustacean is designed for **individuals, developers, sysadmins, SOC teams, and 
 ### **Clone the repository**
 
 ```bash
-git clone https://github.com/CharlesDerek/crustacean.git
-cd crustacean
+git clone https://github.com/CharlesDerek/crustacian.git
+cd crustacian
 ```
 
 ### **Build the CLI**
@@ -67,10 +67,10 @@ cargo build --release
 The optimized binary will appear at:
 
 ```
-target/release/crustacean
+target/release/crustacian
 ```
 
-(Windows: `crustacean.exe`)
+(Windows: `crustacian.exe`)
 
 ---
 
@@ -79,13 +79,13 @@ target/release/crustacean
 ### **Start the interactive CLI**
 
 ```bash
-./crustacean
+./crustacian
 ```
 
 You’ll see a menu similar to:
 
 ```
-==================== Crustacean CLI ====================
+==================== Crustacian CLI ====================
 1. Initialize / repair ClamAV environment
 2. Update signatures (FreshClam)
 3. Run a scan (quick / full / custom)
@@ -98,9 +98,9 @@ You’ll see a menu similar to:
 *(Planned — see Roadmap)*
 
 ```
-crustacean scan --path /home/user/downloads
-crustacean scan --quick
-crustacean scan --full
+crustacian scan --path /home/user/downloads
+crustacian scan --quick
+crustacian scan --full
 ```
 
 ---
@@ -108,7 +108,7 @@ crustacean scan --full
 ## 📂 Folder Structure
 
 ```
-crustacean/
+crustacian/
 │
 ├── src/
 │   ├── main.rs          # CLI entrypoint
@@ -125,7 +125,7 @@ crustacean/
 
 ## 🧠 Architecture Summary
 
-Crustacean separates responsibilities into simple, testable modules:
+Crustacian separates responsibilities into simple, testable modules:
 
 * **Platform Layer**
   Detects OS, locates ClamAV binaries, validates config paths.
@@ -142,7 +142,7 @@ Crustacean separates responsibilities into simple, testable modules:
 * **CLI Layer**
   Provides interactive and upcoming non-interactive interfaces.
 
-This modular approach ensures Crustacean can be embedded into:
+This modular approach ensures Crustacian can be embedded into:
 
 * Automation pipelines
 * SIEM or SOAR workflows
@@ -154,7 +154,7 @@ This modular approach ensures Crustacean can be embedded into:
 
 ## 🔐 Security Considerations
 
-Crustacean emphasizes:
+Crustacian emphasizes:
 
 * **No external telemetry**
 * **No network connectivity except FreshClam updates**
@@ -168,7 +168,7 @@ All operations are **local and transparent**.
 
 ## 🧭 Roadmap
 
-Crustacean aims to remain lightweight, platform-agnostic, and transparent.
+Crustacian aims to remain lightweight, platform-agnostic, and transparent.
 Upcoming milestones include:
 
 ### **Short Term**
@@ -194,7 +194,7 @@ Upcoming milestones include:
 
 ## 🤝 Contributing
 
-Crustacean welcomes contributions that:
+Crustacian welcomes contributions that:
 
 * Improve portability
 * Enhance reliability
@@ -206,7 +206,7 @@ Crustacean welcomes contributions that:
 
 ## 📜 License
 
-Crustacean is released under the **MIT License**.
+Crustacian is released under the **MIT License**.
 
 This allows:
 
@@ -219,7 +219,7 @@ This allows:
 
 ## ⭐ Support the Project
 
-If Crustacean helps you secure your systems, please consider:
+If Crustacian helps you secure your systems, please consider:
 
 * Starring the repository
 * Opening issues or feature requests

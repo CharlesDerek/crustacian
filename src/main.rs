@@ -1,13 +1,3 @@
-// Crustacean Antivirus CLI (Interactive)
-// Platform: Windows 10/11
-// Purpose: One-stop bootstrapper for ClamAV (service + configs), interactive scan runner,
-//          results archiver, and history viewer.
-//
-// Build (in repo root):
-//   cargo build --release
-// Usage:
-//   Run target\release\crustacean.exe (no args). It will ask everything interactively.
-
 use std::collections::HashMap;
 use std::fs;
 use std::io::{self, BufRead, Read, Write};
@@ -24,7 +14,7 @@ fn main() {
     }
 
     loop {
-        println!("================ Crustacean Antivirus CLI ================");
+        println!("================ Crustacian Antivirus CLI ================");
         println!("1. Initialize / repair ClamAV environment");
         println!("2. Run a new scan");
         println!("3. View previous scans");
@@ -48,35 +38,55 @@ fn main() {
 
 fn init_cmd() {
     let clamdir = String::from(DEFAULT_CLAM_DIR);
-    println!("Initializing ClamAV setup...");
+    println!("=== Initialize / Repair ClamAV Environment ===");
 
     if let Err(e) = make_dirs(&clamdir) {
-        eprintln!("[!] Failed to create directories: {e}");
+        eprintln!("[!] Failed to create base directories: {e}");
         wait_for_enter();
         return;
     }
 
-    if !file_exists(Path::new(&clamdir).join("clamd.exe")) {
-        println!("ClamAV not found; installing via winget/choco if possible...");
-        let _ = try_install_clamav();
+    // 1) Ensure binaries exist (clamd.exe / freshclam.exe)
+    if let Err(e) = ensure_clam_binaries(&clamdir) {
+        eprintln!("[!] Could not ensure ClamAV binaries: {e}");
+        println!("    Please verify manual install and try again.");
+        wait_for_enter();
+        return;
     }
 
-    println!("Writing config files...");
+    // 2) Write config files (clamd.conf / freshclam.conf)
+    println!("[+] Writing config files...");
     if let Err(e) = write_clam_confs(&clamdir) {
         eprintln!("[!] Failed writing config files: {e}");
+        wait_for_enter();
+        return;
     }
 
-    println!("Installing and starting clamd service...");
-    let _ = run_silent("cmd", &["/c", &format!(r#"{} --install"#, Path::new(&clamdir).join("clamd.exe").display())]);
-    let _ = run("cmd", &["/c", "net", "start", "clamd"]);
+    // 3) Ensure DB is updated and present
+    println!("[+] Ensuring signature database is present and up to date…");
+    if let Err(e) = ensure_db_updated(&clamdir) {
+        eprintln!("[!] Failed to update/download signatures: {e}");
+        println!("    Check your network/DNS (database.clamav.net) and try again.");
+        wait_for_enter();
+        return;
+    }
 
-    println!("Running initial update (freshclam)...");
-    let freshclam_path = Path::new(&clamdir).join("freshclam.exe");
-    let _ = run(freshclam_path.to_string_lossy().as_ref(), &["-v"]);
+    // 4) Ensure clamd service installed and running
+    println!("[+] Ensuring clamd service is installed and running…");
+    if let Err(e) = ensure_service_installed_and_running(&clamdir) {
+        eprintln!("[!] Failed to start clamd service: {e}");
+        println!("    Check clamd.log for details and try again.");
+        wait_for_enter();
+        return;
+    }
 
-    println!("Done. Press Enter to continue...");
+    println!("\n✅ Environment looks good. You should be able to run scans now.");
+    println!("Press Enter to continue...");
     wait_for_enter();
 }
+
+// --- Scan, history, helpers, etc. remain mostly identical to the previous version ---
+// (Only init/installation logic is significantly upgraded.)
 
 fn scan_cmd() {
     let clamdir = String::from(DEFAULT_CLAM_DIR);
@@ -277,7 +287,14 @@ fn scan_cmd() {
                     "\r{} Scanning… {:5.1}% | {} files | {:.0} f/s | ETA ~ {}",
                     spinner_chars[spin_idx],
                     pct,
-                    human_count(processed, (if total_files > 0 { total_files as f64 } else { adaptive_total }) as i64),
+                    human_count(
+                        processed,
+                        (if total_files > 0 {
+                            total_files as f64
+                        } else {
+                            adaptive_total
+                        }) as i64
+                    ),
                     rate_ema,
                     eta
                 );
@@ -350,56 +367,194 @@ fn history_menu() {
     wait_for_enter();
 }
 
-// Optional repair function, equivalent to repairCmd in Go
-#[allow(dead_code)]
-fn repair_cmd() {
-    let mut clamdir = String::from(DEFAULT_CLAM_DIR);
+// ========== NEW / IMPROVED INIT HELPERS ==========
 
-    println!("\n=== Repair ClamAV Environment ===");
-    println!("Current ClamAV directory: {}", clamdir);
-    print!("Use this directory? (Y/n): ");
-    flush_stdout();
-    let yn = read_line().to_lowercase();
-    if yn == "n" || yn == "no" {
-        print!("Enter full ClamAV directory (e.g., C:\\\\Program Files\\\\ClamAV): ");
-        flush_stdout();
-        let p = read_line().trim().to_string();
-        if !p.is_empty() {
-            clamdir = p;
+fn ensure_clam_binaries(clamdir: &str) -> io::Result<()> {
+    println!("[+] Checking for clamd.exe and freshclam.exe…");
+
+    let clamd = Path::new(clamdir).join("clamd.exe");
+    let fresh = Path::new(clamdir).join("freshclam.exe");
+
+    if file_exists(clamd.clone()) && file_exists(fresh.clone()) {
+        println!("    Found existing ClamAV binaries.");
+        return Ok(());
+    }
+
+    println!("    ClamAV binaries not found. Trying winget/choco install…");
+    try_install_clamav()?;
+
+    // Re-check after install attempt
+    let clamd = Path::new(clamdir).join("clamd.exe");
+    let fresh = Path::new(clamdir).join("freshclam.exe");
+
+    if file_exists(clamd) && file_exists(fresh) {
+        println!("    ClamAV installation detected.");
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "clamd.exe / freshclam.exe not found after install attempt",
+        ))
+    }
+}
+
+fn ensure_db_updated(clamdir: &str) -> io::Result<()> {
+    let max_attempts = 3;
+    let freshclam_path = Path::new(clamdir).join("freshclam.exe");
+    for attempt in 1..=max_attempts {
+        println!("    [Attempt {}/{}] Running freshclam…", attempt, max_attempts);
+        let status = Command::new(&freshclam_path)
+            .arg("-v")
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+
+        if status && db_is_present(clamdir) {
+            println!("    Signatures present and freshclam succeeded.");
+            return Ok(());
+        }
+
+        if db_is_present(clamdir) {
+            println!("    Signatures present; continuing despite freshclam status.");
+            return Ok(());
+        }
+
+        println!("    freshclam did not complete successfully or DB missing. Retrying in 10s…");
+        std::thread::sleep(Duration::from_secs(10));
+    }
+
+    if db_is_present(clamdir) {
+        println!("    DB appears present after retries; proceeding cautiously.");
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::Other,
+            "signature DB not present after multiple freshclam attempts",
+        ))
+    }
+}
+
+fn db_is_present(clamdir: &str) -> bool {
+    let candidates = vec![
+        Path::new(clamdir).join("db"),
+        Path::new(clamdir).join("database"),
+        PathBuf::from(r"C:\ProgramData\.clamwin\db"),
+        PathBuf::from(r"C:\ProgramData\clamav-db"),
+    ];
+
+    for dir in candidates {
+        if let Ok(entries) = fs::read_dir(&dir) {
+            let mut seen_main = false;
+            let mut seen_daily = false;
+            for e in entries.flatten() {
+                let name = e.file_name().to_string_lossy().to_lowercase();
+                if name.starts_with("main.") {
+                    seen_main = true;
+                }
+                if name.starts_with("daily.") {
+                    seen_daily = true;
+                }
+                if seen_main && seen_daily {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn ensure_service_installed_and_running(clamdir: &str) -> io::Result<()> {
+    let clamd_exe = Path::new(clamdir).join("clamd.exe");
+
+    // 1) Ensure service exists
+    if !service_exists("clamd") {
+        println!("    clamd service not found; installing…");
+        let status = Command::new(&clamd_exe).arg("--install").status();
+        if !status.map(|s| s.success()).unwrap_or(false) {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "failed to run clamd.exe --install",
+            ));
+        }
+    } else {
+        println!("    clamd service already installed.");
+    }
+
+    // 2) Make sure the service is not disabled
+    if service_is_disabled("clamd") {
+        println!("    clamd service is disabled; re-enabling (start = demand)…");
+        let status = Command::new("sc")
+            .args(["config", "clamd", "start=", "demand"])
+            .status();
+        if !status.map(|s| s.success()).unwrap_or(false) {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "failed to re-enable clamd service (sc config clamd start= demand)",
+            ));
         }
     }
 
-    if !file_exists(Path::new(&clamdir).join("freshclam.exe"))
-        || !file_exists(Path::new(&clamdir).join("clamd.exe"))
-    {
-        println!("[!] Could not find clamd.exe/freshclam.exe in: {}", clamdir);
-        println!("    Run 'Initialize / repair' first from the main menu (option 1).");
-        println!("Press Enter to continue...");
-        wait_for_enter();
-        return;
+    // 3) Try to start the service and capture output if it fails
+    println!("    Starting clamd service…");
+    let output = Command::new("cmd")
+        .args(["/c", "net", "start", "clamd"])
+        .output()?;
+
+    if !output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        println!("    net start clamd failed.");
+        if !stdout.trim().is_empty() {
+            println!("    --- net start output ---");
+            println!("{stdout}");
+        }
+        if !stderr.trim().is_empty() {
+            println!("    --- net start error ---");
+            println!("{stderr}");
+        }
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            "failed to start clamd service (service may be disabled by policy or misconfigured)",
+        ));
     }
 
-    println!("[+] Restarting clamd service…");
-    let _ = run("cmd", &["/c", "net", "stop", "clamd"]);
-    let _ = run("cmd", &["/c", "net", "start", "clamd"]);
-
-    println!("[+] Running freshclam…");
-    let freshclam_path = Path::new(&clamdir).join("freshclam.exe");
-    let _ = run(freshclam_path.to_string_lossy().as_ref(), &["-v"]);
-
-    println!("[+] Checking readiness… (up to 60s)");
-    let log_path = Path::new(&clamdir).join("clamd.log");
+    // 4) Wait for "daemon ready" in the log
+    let log_path = Path::new(clamdir).join("clamd.log");
+    println!("    Waiting for clamd to report ready (up to 60s)...");
     if wait_for_clam_ready(&log_path, Duration::from_secs(60)) {
-        println!("✅ clamd ready.");
+        println!("    clamd reported ready.");
+        Ok(())
     } else {
-        println!("[!] clamd did not report ready in time. Check logs.");
+        Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "clamd did not report ready in time",
+        ))
     }
-
-    println!("Press Enter to return to the main menu...");
-    wait_for_enter();
 }
 
-// --- Helpers ---
+fn service_exists(name: &str) -> bool {
+    Command::new("sc")
+        .args(["query", name])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+fn service_is_disabled(name: &str) -> bool {
+    if let Ok(output) = Command::new("sc").args(["qc", name]).output() {
+        let stdout = String::from_utf8_lossy(&output.stdout).to_lowercase();
+        stdout
+            .lines()
+            .any(|line| line.contains("start_type") && line.contains("disabled"))
+    } else {
+        false
+    }
+}
+
+
+// ========== GENERIC HELPERS (unchanged / lightly tweaked) ==========
 
 fn flush_stdout() {
     let _ = io::stdout().flush();
@@ -483,9 +638,9 @@ fn cmd_exists(name: &str) -> bool {
 
 fn try_install_clamav() -> io::Result<()> {
     if cmd_exists("winget") {
-        println!("[winget] Searching for ClamAV…");
+        println!("    [winget] Searching for ClamAV…");
         let _ = run("winget", &["search", "clamav"]);
-        println!("[winget] Trying install… (may require admin approval)");
+        println!("    [winget] Trying install… (may require admin approval)");
         if run(
             "winget",
             &[
@@ -504,7 +659,7 @@ fn try_install_clamav() -> io::Result<()> {
     }
 
     if cmd_exists("choco") {
-        println!("[choco] Trying install clamav…");
+        println!("    [choco] Trying install clamav…");
         if run("choco", &["install", "clamav", "-y"]).is_ok() {
             return Ok(());
         }
@@ -512,7 +667,7 @@ fn try_install_clamav() -> io::Result<()> {
 
     Err(io::Error::new(
         io::ErrorKind::Other,
-        "no package manager success",
+        "no package manager succeeded (winget/choco)",
     ))
 }
 
@@ -623,49 +778,33 @@ fn show_if_exists(p: &Path) {
 }
 
 fn chrono_stamp() -> String {
-    // 20250102_150405 style timestamp
     let now = chrono::Local::now();
     now.format("%Y%m%d_%H%M%S").to_string()
 }
 
-// --- Config Templates ---
-// You can tweak/comment these to be less opinionated if you want.
+// --- Config templates ---
 
-const CLAMD_CONF_TEMPLATE: &str = r#"# Crustacean tuned clamd.conf (Windows)
-# Logging
+const CLAMD_CONF_TEMPLATE: &str = r#"# Crustacian tuned clamd.conf (Windows)
 LogFile "C:\\Program Files\\ClamAV\\clamd.log"
 LogTime yes
 LogRotate yes
 LogFileMaxSize 10M
-#LogVerbose yes
-
-# Database health
 FailIfCvdOlderThan 7
-
-# TCP listener (local only)
 TCPSocket 3310
 TCPAddr localhost
-
-# Harden protocol surface
 EnableShutdownCommand no
 EnableReloadCommand yes
 EnableStatsCommand no
 EnableVersionCommand no
-
-# Performance / timeouts
 MaxThreads 20
 ReadTimeout 300
 CommandReadTimeout 30
 SendBufTimeout 200
 IdleTimeout 60
 MaxConnectionQueueLength 200
-
-# Stream / attachments
 StreamMaxLength 50M
 StreamMinPort 30000
 StreamMaxPort 32000
-
-# File type scanning
 ScanMail yes
 PhishingSignatures yes
 PhishingScanURLs yes
@@ -676,13 +815,9 @@ ScanOneNote yes
 ScanSWF no
 ScanImage yes
 ScanImageFuzzyHash yes
-
-# PUA policy
 DetectPUA yes
 ExcludePUA NetTool
 ExcludePUA PWTool
-
-# Heuristics
 HeuristicAlerts yes
 HeuristicScanPrecedence no
 AlertPhishingSSLMismatch yes
@@ -692,8 +827,6 @@ AlertEncryptedArchive yes
 AlertEncryptedDoc yes
 AlertOLE2Macros yes
 PartitionIntersection yes
-
-# Limits / bombs
 MaxScanTime 300000
 MaxScanSize 800M
 MaxFileSize 250M
@@ -711,8 +844,6 @@ PCREMatchLimit 100000
 PCRERecMatchLimit 20000
 PCREMaxFileSize 200M
 AlertExceedsMax yes
-
-# Bytecode / engine
 AllowAllMatchScan yes
 BytecodeSecurity TrustSigned
 BytecodeTimeout 10000
@@ -721,20 +852,16 @@ DisableCache no
 CacheSize 65536
 "#;
 
-const FRESHCLAM_CONF_TEMPLATE: &str = r#"# Crustacean tuned freshclam.conf (Windows)
-# Logging
+const FRESHCLAM_CONF_TEMPLATE: &str = r#"# Crustacian tuned freshclam.conf (Windows)
 UpdateLogFile "C:\\Program Files\\ClamAV\\freshclam.log"
 LogTime yes
 LogRotate yes
 LogFileMaxSize 10M
-#LogVerbose yes
-
 DatabaseMirror database.clamav.net
 Checks 24
 MaxAttempts 5
 ConnectTimeout 60
 ReceiveTimeout 300
-
 NotifyClamd "C:\\Program Files\\ClamAV\\clamd.conf"
 TestDatabases yes
 Bytecode yes
