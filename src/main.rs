@@ -14,7 +14,7 @@ fn main() {
     }
 
     loop {
-        println!("================ Crustacean Antivirus CLI ================");
+        println!("================ Crustacian Antivirus CLI ================");
         println!("1. Initialize / repair ClamAV environment");
         println!("2. Run a new scan");
         println!("3. View previous scans");
@@ -784,7 +784,7 @@ fn chrono_stamp() -> String {
 
 // --- Config templates ---
 
-const CLAMD_CONF_TEMPLATE: &str = r#"# Crustacean tuned clamd.conf (Windows)
+const CLAMD_CONF_TEMPLATE: &str = r#"# Crustacian tuned clamd.conf (Windows)
 LogFile "C:\\Program Files\\ClamAV\\clamd.log"
 LogTime yes
 LogRotate yes
@@ -852,7 +852,7 @@ DisableCache no
 CacheSize 65536
 "#;
 
-const FRESHCLAM_CONF_TEMPLATE: &str = r#"# Crustacean tuned freshclam.conf (Windows)
+const FRESHCLAM_CONF_TEMPLATE: &str = r#"# Crustacian tuned freshclam.conf (Windows)
 UpdateLogFile "C:\\Program Files\\ClamAV\\freshclam.log"
 LogTime yes
 LogRotate yes
