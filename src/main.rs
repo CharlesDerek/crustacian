@@ -1,4 +1,4 @@
-// Crustacean Antivirus CLI (Interactive)
+// Crustacian Antivirus CLI (Interactive)
 // Platform: Windows 10/11
 // Purpose: One-stop bootstrapper for ClamAV (service + configs), interactive scan runner,
 //          results archiver, and history viewer.
@@ -6,7 +6,7 @@
 // Build (in repo root):
 //   cargo build --release
 // Usage:
-//   Run target\release\crustacean.exe (no args). It will ask everything interactively.
+//   Run target\release\crustacian.exe (no args). It will ask everything interactively.
 
 use std::collections::HashMap;
 use std::fs;
@@ -24,7 +24,7 @@ fn main() {
     }
 
     loop {
-        println!("================ Crustacean Antivirus CLI ================");
+        println!("================ Crustacian Antivirus CLI ================");
         println!("1. Initialize / repair ClamAV environment");
         println!("2. Run a new scan");
         println!("3. View previous scans");
@@ -631,7 +631,7 @@ fn chrono_stamp() -> String {
 // --- Config Templates ---
 // You can tweak/comment these to be less opinionated if you want.
 
-const CLAMD_CONF_TEMPLATE: &str = r#"# Crustacean tuned clamd.conf (Windows)
+const CLAMD_CONF_TEMPLATE: &str = r#"# Crustacian tuned clamd.conf (Windows)
 # Logging
 LogFile "C:\\Program Files\\ClamAV\\clamd.log"
 LogTime yes
@@ -721,7 +721,7 @@ DisableCache no
 CacheSize 65536
 "#;
 
-const FRESHCLAM_CONF_TEMPLATE: &str = r#"# Crustacean tuned freshclam.conf (Windows)
+const FRESHCLAM_CONF_TEMPLATE: &str = r#"# Crustacian tuned freshclam.conf (Windows)
 # Logging
 UpdateLogFile "C:\\Program Files\\ClamAV\\freshclam.log"
 LogTime yes
