@@ -466,6 +466,7 @@ fn db_is_present(clamdir: &str) -> bool {
 fn ensure_service_installed_and_running(clamdir: &str) -> io::Result<()> {
     let clamd_exe = Path::new(clamdir).join("clamd.exe");
 
+    // 1) Ensure service exists
     if !service_exists("clamd") {
         println!("    clamd service not found; installing…");
         let status = Command::new(&clamd_exe).arg("--install").status();
@@ -479,10 +480,45 @@ fn ensure_service_installed_and_running(clamdir: &str) -> io::Result<()> {
         println!("    clamd service already installed.");
     }
 
-    println!("    Starting clamd service…");
-    let _ = run("cmd", &["/c", "net", "start", "clamd"]);
+    // 2) Make sure the service is not disabled
+    if service_is_disabled("clamd") {
+        println!("    clamd service is disabled; re-enabling (start = demand)…");
+        let status = Command::new("sc")
+            .args(["config", "clamd", "start=", "demand"])
+            .status();
+        if !status.map(|s| s.success()).unwrap_or(false) {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "failed to re-enable clamd service (sc config clamd start= demand)",
+            ));
+        }
+    }
 
-    // Wait for ready marker in log
+    // 3) Try to start the service and capture output if it fails
+    println!("    Starting clamd service…");
+    let output = Command::new("cmd")
+        .args(["/c", "net", "start", "clamd"])
+        .output()?;
+
+    if !output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        println!("    net start clamd failed.");
+        if !stdout.trim().is_empty() {
+            println!("    --- net start output ---");
+            println!("{stdout}");
+        }
+        if !stderr.trim().is_empty() {
+            println!("    --- net start error ---");
+            println!("{stderr}");
+        }
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            "failed to start clamd service (service may be disabled by policy or misconfigured)",
+        ));
+    }
+
+    // 4) Wait for "daemon ready" in the log
     let log_path = Path::new(clamdir).join("clamd.log");
     println!("    Waiting for clamd to report ready (up to 60s)...");
     if wait_for_clam_ready(&log_path, Duration::from_secs(60)) {
@@ -505,6 +541,18 @@ fn service_exists(name: &str) -> bool {
         .map(|s| s.success())
         .unwrap_or(false)
 }
+
+fn service_is_disabled(name: &str) -> bool {
+    if let Ok(output) = Command::new("sc").args(["qc", name]).output() {
+        let stdout = String::from_utf8_lossy(&output.stdout).to_lowercase();
+        stdout
+            .lines()
+            .any(|line| line.contains("start_type") && line.contains("disabled"))
+    } else {
+        false
+    }
+}
+
 
 // ========== GENERIC HELPERS (unchanged / lightly tweaked) ==========
 
