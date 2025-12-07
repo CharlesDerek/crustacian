@@ -2,10 +2,10 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Crustacean — Rust-Based Antivirus CLI for ClamAV</title>
+    <title>Crustacian — Rust-Based Antivirus CLI for ClamAV</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
 
-    <meta name="description" content="Crustacean is an open-source Rust-based CLI that automates ClamAV installation, updates, and scanning across Windows, macOS, and Linux.">
+    <meta name="description" content="Crustacian is an open-source Rust-based CLI that automates ClamAV installation, updates, and scanning across Windows, macOS, and Linux.">
 
     <!-- Bootstrap 5 CSS (CDN) -->
     <link
@@ -91,7 +91,7 @@
 <nav class="navbar navbar-expand-lg navbar-dark fixed-top border-bottom border-secondary-subtle">
     <div class="container">
         <a class="navbar-brand fw-semibold" href="#">
-            🦀 Crustacean
+            🦀 Crustacian
         </a>
         <button class="navbar-toggler" type="button" data-bs-toggle="collapse"
                 data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false"
@@ -104,7 +104,7 @@
                 <li class="nav-item"><a class="nav-link" href="#features">Features</a></li>
                 <li class="nav-item"><a class="nav-link" href="#usage">Usage</a></li>
                 <li class="nav-item">
-                    <a class="btn btn-outline-light btn-sm ms-lg-3" href="https://github.com/CharlesDerek/crustacean" target="_blank" rel="noopener">
+                    <a class="btn btn-outline-light btn-sm ms-lg-3" href="https://github.com/CharlesDerek/crustacian" target="_blank" rel="noopener">
                         View on GitHub
                     </a>
                 </li>
@@ -124,20 +124,20 @@
                     Rust · Open Source · ClamAV Automation
                 </span>
                 <h1 class="hero-title mb-3">
-                    Crustacean — a Rust-powered CLI for ClamAV automation
+                    Crustacian — a Rust-powered CLI for ClamAV automation
                 </h1>
                 <p class="hero-subtitle mb-4">
-                    Crustacean is a cross-platform command-line tool written in Rust that
+                    Crustacian is a cross-platform command-line tool written in Rust that
                     installs, configures, and drives ClamAV + FreshClam across Windows,
                     macOS, and Linux. Built for developers, sysadmins, and security teams
                     who want predictable, scriptable antivirus scanning.
                 </p>
                 <div class="d-flex flex-wrap gap-2 mb-4">
-                    <a href="https://github.com/CharlesDerek/crustacean" target="_blank" rel="noopener"
+                    <a href="https://github.com/CharlesDerek/crustacian" target="_blank" rel="noopener"
                        class="btn btn-primary btn-lg">
                         <span class="me-1">🔗</span> GitHub Repository
                     </a>
-                    <a href="https://github.com/CharlesDerek/crustacean/releases" class="btn btn-outline-light btn-lg">
+                    <a href="https://github.com/CharlesDerek/crustacian/releases" class="btn btn-outline-light btn-lg">
                         <span class="me-1">▶</span> Install Now
                     </a>
                 </div>
@@ -174,9 +174,9 @@
     <div class="container">
         <div class="row g-4 align-items-center">
             <div class="col-lg-6">
-                <h2 class="h3 mb-3">What is Crustacean?</h2>
+                <h2 class="h3 mb-3">What is Crustacian?</h2>
                 <p class="text-secondary">
-                    Crustacean is a CLI tool that wraps ClamAV in a clean, ergonomic,
+                    Crustacian is a CLI tool that wraps ClamAV in a clean, ergonomic,
                     Rust-based interface. It handles the heavy lifting:
                 </p>
                 <ul class="text-secondary">
@@ -186,7 +186,7 @@
                     <li>Saving summaries and infection lists for later use</li>
                 </ul>
                 <p class="text-secondary mb-0">
-                    You stay in control of your environment — Crustacean is
+                    You stay in control of your environment — Crustacian is
                     self-hosted, local-first, and built to be integrated into your
                     existing tools and infrastructure.
                 </p>
@@ -211,7 +211,7 @@
                         </div>
                         <hr class="my-3 border-secondary-subtle">
                         <p class="small text-secondary mb-0">
-                            Crustacean doesn’t phone home, doesn’t collect data,
+                            Crustacian doesn’t phone home, doesn’t collect data,
                             and doesn’t lock you into any vendor ecosystem. It’s a
                             simple, inspectable tool you can fork, extend, or embed.
                         </p>
@@ -271,24 +271,24 @@
         <h2 class="h3 mb-3">Basic usage</h2>
         <p class="text-secondary">
             Once you’ve cloned the repository and built the project with Cargo, you
-            can start Crustacean from a terminal:
+            can start Crustacian from a terminal:
         </p>
         <div class="row g-4">
             <div class="col-lg-6">
                 <h3 class="h6">Build</h3>
                 <pre><code># Clone the repository
-git clone https://github.com/CharlesDerek/crustacean.git
-cd crustacean
+git clone https://github.com/CharlesDerek/crustacian.git
+cd crustacian
 
 # Build in release mode
 cargo build --release</code></pre>
 
                 <h3 class="h6 mt-4">Run the interactive CLI</h3>
                 <pre><code># On Windows (example)
-.\target\release\crustacean.exe
+.\target\release\crustacian.exe
 
 # On Linux / macOS
-./target/release/crustacean</code></pre>
+./target/release/crustacian</code></pre>
             </div>
             <div class="col-lg-6">
                 <h3 class="h6">Example workflow</h3>
@@ -315,14 +315,14 @@ cargo build --release</code></pre>
     <div class="container">
         <div class="d-flex flex-column flex-md-row justify-content-between align-items-center gap-2">
             <div class="footer">
-                © <span id="year"></span> Crustacean — Open-source Rust antivirus CLI.
+                © <span id="year"></span> Crustacian — Open-source Rust antivirus CLI.
             </div>
             <div class="footer">
-                <a href="https://github.com/CharlesDerek/crustacean" target="_blank" rel="noopener" class="link-light">
+                <a href="https://github.com/CharlesDerek/crustacian" target="_blank" rel="noopener" class="link-light">
                     GitHub
                 </a>
                 <span class="mx-2">·</span>
-                <span>crustacean.org</span>
+                <span>crustacian.org</span>
             </div>
         </div>
     </div>
