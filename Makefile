@@ -3,6 +3,7 @@ CARGO ?= $(shell command -v cargo 2>/dev/null)
 GIT ?= $(shell command -v git 2>/dev/null)
 HELM ?= $(shell command -v helm 2>/dev/null)
 KUBECTL ?= $(shell command -v kubectl 2>/dev/null)
+VALIDATION_KUBECONFIG ?= /dev/null
 KUBERNETES_MANIFEST_DIRS ?= k8s kubernetes manifests deploy
 
 VALIDATE_TARGETS := validate-files
@@ -10,10 +11,14 @@ ifneq ($(strip $(CARGO)),)
 VALIDATE_TARGETS += validate-rust
 endif
 VALIDATE_TARGETS += validate-helm validate-kubernetes
+VALIDATION_RUNNER_TARGETS := validate-files validate-helm validate-kubernetes
 
-.PHONY: validate validation_runner validate-files validate-rust validate-helm validate-kubernetes
+.PHONY: validate validate-local validation_runner validate-files validate-rust validate-helm validate-kubernetes
 
-validate validation_runner: $(VALIDATE_TARGETS)
+validate validate-local: $(VALIDATE_TARGETS)
+	@echo "Non-mutating validation completed."
+
+validation_runner: $(VALIDATION_RUNNER_TARGETS)
 	@echo "Non-mutating validation completed."
 
 validate-files:
@@ -79,7 +84,7 @@ validate-kubernetes:
 			for manifest in "$$dir"/*.yaml "$$dir"/*.yml; do \
 				[ -e "$$manifest" ] || continue; \
 				echo "Client-side dry-run validation for Kubernetes manifest: $$manifest"; \
-				"$(KUBECTL)" apply --dry-run=client --validate=false -f "$$manifest" >/dev/null; \
+				KUBECONFIG="$(VALIDATION_KUBECONFIG)" "$(KUBECTL)" apply --dry-run=client --validate=false -f "$$manifest" >/dev/null; \
 			done; \
 		fi; \
 	done
