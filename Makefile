@@ -11,10 +11,14 @@ ifneq ($(strip $(CARGO)),)
 VALIDATE_TARGETS += validate-rust
 endif
 VALIDATE_TARGETS += validate-helm validate-kubernetes
+VALIDATION_RUNNER_TARGETS := validate-files validate-helm validate-kubernetes
 
 .PHONY: validate validate-local validation_runner validate-files validate-rust validate-helm validate-kubernetes
 
-validate validate-local validation_runner: $(VALIDATE_TARGETS)
+validate validate-local: $(VALIDATE_TARGETS)
+	@echo "Non-mutating validation completed."
+
+validation_runner: $(VALIDATION_RUNNER_TARGETS)
 	@echo "Non-mutating validation completed."
 
 validate-files:
