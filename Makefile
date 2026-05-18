@@ -18,7 +18,7 @@ validate-files:
 
 validate-rust:
 	@if [ -f Cargo.toml ]; then \
-		if [ -n "$(CARGO)" ]; then \
+		if [ -n "$(CARGO)" ] && command -v "$(CARGO)" >/dev/null 2>&1; then \
 			echo "Running Rust validation with cargo check and cargo test..."; \
 			"$(CARGO)" check --locked; \
 			"$(CARGO)" test --locked; \
@@ -31,7 +31,7 @@ validate-rust:
 
 validate-helm:
 	@if [ -d charts ]; then \
-		if [ -n "$(HELM)" ]; then \
+		if [ -n "$(HELM)" ] && command -v "$(HELM)" >/dev/null 2>&1; then \
 			find charts -mindepth 1 -maxdepth 1 -type d -print | sort | while IFS= read -r chart; do \
 				echo "Validating Helm chart: $$chart"; \
 				"$(HELM)" lint "$$chart"; \
