@@ -10,10 +10,10 @@ VALIDATE_TARGETS := validate-files
 ifneq ($(strip $(CARGO)),)
 VALIDATE_TARGETS += validate-rust
 endif
-VALIDATE_TARGETS += validate-helm validate-kubernetes
+VALIDATE_TARGETS += validate-helm validate-kubernetes validate-tests
 VALIDATION_RUNNER_TARGETS := validate-files validate-helm validate-kubernetes
 
-.PHONY: validate validate-local validation_runner validate-files validate-rust validate-helm validate-kubernetes
+.PHONY: validate validate-local validation_runner validate-files validate-rust validate-helm validate-kubernetes validate-tests
 
 validate validate-local: $(VALIDATE_TARGETS)
 	@echo "Non-mutating validation completed."
@@ -41,6 +41,10 @@ validate-rust:
 	else \
 		echo "Cargo.toml not found; skipping Rust validation."; \
 	fi
+
+validate-tests:
+	@echo "Running validation target self-checks..."
+	@sh tests/validate-targets.sh
 
 validate-helm:
 	@if [ -d charts ]; then \
