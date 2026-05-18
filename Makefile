@@ -2,10 +2,18 @@ SHELL := /bin/sh
 CARGO ?= $(shell command -v cargo 2>/dev/null)
 GIT ?= $(shell command -v git 2>/dev/null)
 HELM ?= $(shell command -v helm 2>/dev/null)
+KUBECTL ?= $(shell command -v kubectl 2>/dev/null)
+KUBERNETES_MANIFEST_DIRS ?= k8s kubernetes manifests deploy
 
-.PHONY: validate validate-files validate-rust validate-helm
+VALIDATE_TARGETS := validate-files
+ifneq ($(strip $(CARGO)),)
+VALIDATE_TARGETS += validate-rust
+endif
+VALIDATE_TARGETS += validate-helm validate-kubernetes
 
-validate: validate-files validate-rust validate-helm
+.PHONY: validate validation_runner validate-files validate-rust validate-helm validate-kubernetes
+
+validate validation_runner: $(VALIDATE_TARGETS)
 	@echo "Non-mutating validation completed."
 
 validate-files:
@@ -43,3 +51,35 @@ validate-helm:
 	else \
 		echo "charts/ not found; skipping Helm validation."; \
 	fi
+
+validate-kubernetes:
+	@manifest_found=0; \
+	dir_found=0; \
+	for dir in $(KUBERNETES_MANIFEST_DIRS); do \
+		if [ -d "$$dir" ]; then \
+			dir_found=1; \
+			for manifest in "$$dir"/*.yaml "$$dir"/*.yml; do \
+				[ -e "$$manifest" ] || continue; \
+				manifest_found=1; \
+			done; \
+		fi; \
+	done; \
+	if [ "$$dir_found" -eq 0 ]; then \
+		echo "No Kubernetes manifest directories found; skipping Kubernetes validation."; \
+		exit 0; \
+	elif [ "$$manifest_found" -eq 0 ]; then \
+		echo "No Kubernetes manifest files found; skipping Kubernetes validation."; \
+		exit 0; \
+	elif [ -z "$(KUBECTL)" ]; then \
+		echo "kubectl not found; skipping Kubernetes manifest validation."; \
+		exit 0; \
+	fi; \
+	for dir in $(KUBERNETES_MANIFEST_DIRS); do \
+		if [ -d "$$dir" ]; then \
+			for manifest in "$$dir"/*.yaml "$$dir"/*.yml; do \
+				[ -e "$$manifest" ] || continue; \
+				echo "Client-side dry-run validation for Kubernetes manifest: $$manifest"; \
+				"$(KUBECTL)" apply --dry-run=client --validate=false -f "$$manifest" >/dev/null; \
+			done; \
+		fi; \
+	done
