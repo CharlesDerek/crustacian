@@ -3,6 +3,9 @@ CARGO ?= $(shell command -v cargo 2>/dev/null)
 GIT ?= $(shell command -v git 2>/dev/null)
 HELM ?= $(shell command -v helm 2>/dev/null)
 KUBECTL ?= $(shell command -v kubectl 2>/dev/null)
+ANSIBLE_PLAYBOOK ?= $(shell command -v ansible-playbook 2>/dev/null)
+ANSIBLE_PLAYBOOK_DIR ?= ansible/playbooks
+ANSIBLE_VALIDATION_MODE ?= syntax-check
 VALIDATION_KUBECONFIG ?= /dev/null
 KUBERNETES_MANIFEST_DIRS ?= k8s kubernetes manifests deploy
 SHELL_VALIDATION_DIRS ?= scripts tests
@@ -11,10 +14,10 @@ VALIDATE_TARGETS := validate-files
 ifneq ($(strip $(CARGO)),)
 VALIDATE_TARGETS += validate-rust
 endif
-VALIDATE_TARGETS += validate-shell validate-helm validate-kubernetes validate-tests
-NON_MUTATING_VALIDATION_TARGETS := validate-files validate-shell validate-helm validate-kubernetes
+VALIDATE_TARGETS += validate-shell validate-ansible validate-helm validate-kubernetes validate-tests
+NON_MUTATING_VALIDATION_TARGETS := validate-files validate-shell validate-ansible validate-helm validate-kubernetes
 
-.PHONY: validate validate-local validate-non-mutating validation_runner validate-files validate-rust validate-shell validate-helm validate-kubernetes validate-tests
+.PHONY: validate validate-local validate-non-mutating validation_runner validate-files validate-rust validate-shell validate-ansible validate-helm validate-kubernetes validate-tests
 
 validate validate-local: $(VALIDATE_TARGETS)
 	@echo "Non-mutating validation completed."
@@ -67,6 +70,12 @@ validate-shell:
 validate-tests:
 	@echo "Running validation target self-checks..."
 	@sh tests/validate-targets.sh
+
+validate-ansible:
+	@ANSIBLE_PLAYBOOK="$(ANSIBLE_PLAYBOOK)" \
+		ANSIBLE_PLAYBOOK_DIR="$(ANSIBLE_PLAYBOOK_DIR)" \
+		ANSIBLE_VALIDATION_MODE="$(ANSIBLE_VALIDATION_MODE)" \
+		sh scripts/validate-ansible-playbooks.sh
 
 validate-helm:
 	@if [ -d charts ]; then \

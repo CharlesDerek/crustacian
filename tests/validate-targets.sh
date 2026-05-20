@@ -54,6 +54,12 @@ if ! grep -q "Checking shell script syntax: tests/validate-targets.sh" "$output_
 	exit 1
 fi
 
+if ! grep -q "No Ansible playbook directory found; skipping Ansible validation." "$output_file"; then
+	cat "$output_file" >&2
+	echo "Expected validation_runner to include Ansible playbook validation." >&2
+	exit 1
+fi
+
 if ! grep -q "Non-mutating validation completed." "$output_file"; then
 	cat "$output_file" >&2
 	echo "Expected validation_runner to complete successfully." >&2
