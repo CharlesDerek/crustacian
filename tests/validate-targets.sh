@@ -4,6 +4,7 @@ set -eu
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/crustacian-validation.XXXXXX")
 output_file="$tmp_dir/validation-runner.out"
+target_output_file="$tmp_dir/validate-non-mutating.out"
 script_output_file="$tmp_dir/validation-script.out"
 kubectl_skip_output="$tmp_dir/kubectl-skip.out"
 shell_failure_output="$tmp_dir/shell-failure.out"
@@ -63,6 +64,37 @@ fi
 if ! grep -q "Non-mutating validation completed." "$output_file"; then
 	cat "$output_file" >&2
 	echo "Expected validation_runner to complete successfully." >&2
+	exit 1
+fi
+
+if ! (
+	cd "$repo_root"
+	"${MAKE:-make}" --no-print-directory validate-non-mutating \
+		CARGO= \
+		HELM= \
+		KUBECTL= \
+		KUBERNETES_MANIFEST_DIRS="$tmp_dir/missing-manifests" \
+		>"$target_output_file" 2>&1
+); then
+	cat "$target_output_file" >&2
+	exit 1
+fi
+
+if ! grep -q "No Kubernetes manifest directories found; skipping Kubernetes validation." "$target_output_file"; then
+	cat "$target_output_file" >&2
+	echo "Expected validate-non-mutating to skip Kubernetes validation without manifest directories." >&2
+	exit 1
+fi
+
+if grep -q "Running Rust validation" "$target_output_file"; then
+	cat "$target_output_file" >&2
+	echo "Expected validate-non-mutating to avoid Rust validation." >&2
+	exit 1
+fi
+
+if ! grep -q "Non-mutating validation completed." "$target_output_file"; then
+	cat "$target_output_file" >&2
+	echo "Expected validate-non-mutating to complete successfully." >&2
 	exit 1
 fi
 
