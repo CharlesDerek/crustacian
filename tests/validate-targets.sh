@@ -11,6 +11,7 @@ script_help_output_file="$tmp_dir/validation-script-help.out"
 kubectl_skip_output="$tmp_dir/kubectl-skip.out"
 kubectl_dry_run_output="$tmp_dir/kubectl-dry-run.out"
 kubectl_failure_output="$tmp_dir/kubectl-failure.out"
+kubectl_kubeconfig_output="$tmp_dir/kubectl-kubeconfig.out"
 kubectl_log="$tmp_dir/kubectl.log"
 shell_failure_output="$tmp_dir/shell-failure.out"
 helm_empty_output="$tmp_dir/helm-empty.out"
@@ -275,6 +276,26 @@ if ! grep -q -- "KUBECONFIG=/dev/null args=apply --dry-run=client --validate=fal
 	cat "$kubectl_dry_run_output" >&2
 	cat "$kubectl_log" >&2
 	echo "Expected validate-kubernetes to use client-side dry-run with an isolated kubeconfig." >&2
+	exit 1
+fi
+
+if (
+	cd "$repo_root"
+	KUBECTL_LOG="$kubectl_log" \
+		"${MAKE:-make}" --no-print-directory validate-kubernetes \
+		KUBECTL="$fake_kubectl" \
+		VALIDATION_KUBECONFIG="$tmp_dir/real-kubeconfig" \
+		KUBERNETES_MANIFEST_DIRS="$manifest_dir" \
+		>"$kubectl_kubeconfig_output" 2>&1
+); then
+	cat "$kubectl_kubeconfig_output" >&2
+	echo "Expected validate-kubernetes to reject real kubeconfig paths." >&2
+	exit 1
+fi
+
+if ! grep -q "Refusing Kubernetes validation with VALIDATION_KUBECONFIG=$tmp_dir/real-kubeconfig" "$kubectl_kubeconfig_output"; then
+	cat "$kubectl_kubeconfig_output" >&2
+	echo "Expected validate-kubernetes to explain the kubeconfig refusal." >&2
 	exit 1
 fi
 

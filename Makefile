@@ -124,6 +124,9 @@ validate-kubernetes:
 	elif [ -z "$(KUBECTL)" ]; then \
 		echo "kubectl not found; skipping Kubernetes manifest validation."; \
 		exit 0; \
+	elif [ "$(VALIDATION_KUBECONFIG)" != "/dev/null" ]; then \
+		echo "Refusing Kubernetes validation with VALIDATION_KUBECONFIG=$(VALIDATION_KUBECONFIG); use /dev/null for non-mutating validation."; \
+		exit 2; \
 	fi; \
 	status=0; \
 	while IFS= read -r manifest; do \
