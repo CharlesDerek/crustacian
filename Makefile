@@ -125,7 +125,9 @@ validate-kubernetes:
 		echo "kubectl not found; skipping Kubernetes manifest validation."; \
 		exit 0; \
 	fi; \
+	status=0; \
 	while IFS= read -r manifest; do \
 		echo "Client-side dry-run validation for Kubernetes manifest: $$manifest"; \
-		KUBECONFIG="$(VALIDATION_KUBECONFIG)" "$(KUBECTL)" apply --dry-run=client --validate=false -f "$$manifest" >/dev/null; \
-	done <"$$manifests_file"
+		KUBECONFIG="$(VALIDATION_KUBECONFIG)" "$(KUBECTL)" apply --dry-run=client --validate=false -f "$$manifest" >/dev/null || status=1; \
+	done <"$$manifests_file"; \
+	exit "$$status"
