@@ -11,15 +11,17 @@ ifneq ($(strip $(CARGO)),)
 VALIDATE_TARGETS += validate-rust
 endif
 VALIDATE_TARGETS += validate-helm validate-kubernetes validate-tests
-VALIDATION_RUNNER_TARGETS := validate-files validate-helm validate-kubernetes
+NON_MUTATING_VALIDATION_TARGETS := validate-files validate-helm validate-kubernetes
 
-.PHONY: validate validate-local validation_runner validate-files validate-rust validate-helm validate-kubernetes validate-tests
+.PHONY: validate validate-local validate-non-mutating validation_runner validate-files validate-rust validate-helm validate-kubernetes validate-tests
 
 validate validate-local: $(VALIDATE_TARGETS)
 	@echo "Non-mutating validation completed."
 
-validation_runner: $(VALIDATION_RUNNER_TARGETS)
+validate-non-mutating: $(NON_MUTATING_VALIDATION_TARGETS)
 	@echo "Non-mutating validation completed."
+
+validation_runner: validate-non-mutating
 
 validate-files:
 	@if [ -n "$(GIT)" ] && "$(GIT)" rev-parse --is-inside-work-tree >/dev/null 2>&1; then \
