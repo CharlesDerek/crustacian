@@ -10,10 +10,10 @@ VALIDATE_TARGETS := validate-files
 ifneq ($(strip $(CARGO)),)
 VALIDATE_TARGETS += validate-rust
 endif
-VALIDATE_TARGETS += validate-helm validate-kubernetes validate-tests
-NON_MUTATING_VALIDATION_TARGETS := validate-files validate-helm validate-kubernetes
+VALIDATE_TARGETS += validate-shell validate-helm validate-kubernetes validate-tests
+NON_MUTATING_VALIDATION_TARGETS := validate-files validate-shell validate-helm validate-kubernetes
 
-.PHONY: validate validate-local validate-non-mutating validation_runner validate-files validate-rust validate-helm validate-kubernetes validate-tests
+.PHONY: validate validate-local validate-non-mutating validation_runner validate-files validate-rust validate-shell validate-helm validate-kubernetes validate-tests
 
 validate validate-local: $(VALIDATE_TARGETS)
 	@echo "Non-mutating validation completed."
@@ -43,6 +43,21 @@ validate-rust:
 	else \
 		echo "Cargo.toml not found; skipping Rust validation."; \
 	fi
+
+validate-shell:
+	@files=$$(for dir in scripts tests; do \
+		if [ -d "$$dir" ]; then \
+			find "$$dir" -type f \( -name '*.sh' -o -perm -111 \) -print; \
+		fi; \
+	done | sort); \
+	if [ -z "$$files" ]; then \
+		echo "No shell scripts found; skipping shell syntax validation."; \
+		exit 0; \
+	fi; \
+	echo "$$files" | while IFS= read -r script; do \
+		echo "Checking shell script syntax: $$script"; \
+		sh -n "$$script"; \
+	done
 
 validate-tests:
 	@echo "Running validation target self-checks..."
