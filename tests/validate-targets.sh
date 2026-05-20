@@ -272,7 +272,7 @@ if ! (
 	exit 1
 fi
 
-if ! grep -q -- "KUBECONFIG=/dev/null args=apply --dry-run=client --validate=false -f $nested_manifest_dir/example.yaml" "$kubectl_log"; then
+if ! grep -q -- "KUBECONFIG=/dev/null args=--kubeconfig /dev/null apply --dry-run=client --validate=false -f $nested_manifest_dir/example.yaml" "$kubectl_log"; then
 	cat "$kubectl_dry_run_output" >&2
 	cat "$kubectl_log" >&2
 	echo "Expected validate-kubernetes to use client-side dry-run with an isolated kubeconfig." >&2
