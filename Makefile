@@ -90,11 +90,13 @@ validate-helm:
 			exit 0; \
 		fi; \
 		if [ -n "$(HELM)" ] && command -v "$(HELM)" >/dev/null 2>&1; then \
+			status=0; \
 			while IFS= read -r chart; do \
 				echo "Validating Helm chart: $$chart"; \
-				"$(HELM)" lint "$$chart"; \
-				"$(HELM)" template "$$(basename "$$chart")" "$$chart" >/dev/null; \
+				"$(HELM)" lint "$$chart" || status=1; \
+				"$(HELM)" template "$$(basename "$$chart")" "$$chart" >/dev/null || status=1; \
 			done <"$$charts_file"; \
+			exit "$$status"; \
 		else \
 			echo "helm not found; skipping Helm validation."; \
 		fi; \
