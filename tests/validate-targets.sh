@@ -7,6 +7,10 @@ output_file="$tmp_dir/validation-runner.out"
 script_output_file="$tmp_dir/validation-script.out"
 kubectl_skip_output="$tmp_dir/kubectl-skip.out"
 shell_failure_output="$tmp_dir/shell-failure.out"
+ansible_skip_output="$tmp_dir/ansible-skip.out"
+ansible_syntax_output="$tmp_dir/ansible-syntax.out"
+ansible_check_output="$tmp_dir/ansible-check.out"
+ansible_log="$tmp_dir/ansible-playbook.log"
 
 cleanup() {
 	rm -rf "$tmp_dir"
@@ -75,6 +79,12 @@ if ! grep -q "Non-mutating validation completed." "$script_output_file"; then
 	exit 1
 fi
 
+if ! grep -q "No Ansible playbook directory found; skipping Ansible validation." "$script_output_file"; then
+	cat "$script_output_file" >&2
+	echo "Expected scripts/validate-non-mutating.sh to include Ansible playbook validation." >&2
+	exit 1
+fi
+
 manifest_dir="$tmp_dir/manifests"
 mkdir "$manifest_dir"
 cat >"$manifest_dir/example.yaml" <<'MANIFEST'
@@ -122,5 +132,89 @@ fi
 if ! grep -q "Checking shell script syntax: $bad_shell_dir/invalid.sh" "$shell_failure_output"; then
 	cat "$shell_failure_output" >&2
 	echo "Expected validate-shell to report the invalid shell script path." >&2
+	exit 1
+fi
+
+if ! (
+	cd "$repo_root"
+	ANSIBLE_PLAYBOOK_DIR="$tmp_dir/missing-playbooks" sh scripts/validate-ansible-playbooks.sh \
+		>"$ansible_skip_output" 2>&1
+); then
+	cat "$ansible_skip_output" >&2
+	exit 1
+fi
+
+if ! grep -q "No Ansible playbook directory found; skipping Ansible validation." "$ansible_skip_output"; then
+	cat "$ansible_skip_output" >&2
+	echo "Expected Ansible validation to skip safely without a playbook directory." >&2
+	exit 1
+fi
+
+ansible_playbook_dir="$tmp_dir/playbooks"
+mkdir "$ansible_playbook_dir"
+cat >"$ansible_playbook_dir/site.yml" <<'PLAYBOOK'
+---
+- hosts: localhost
+  gather_facts: false
+  tasks: []
+PLAYBOOK
+cat >"$ansible_playbook_dir/destroy-cluster.yml" <<'PLAYBOOK'
+---
+- hosts: localhost
+  gather_facts: false
+  tasks: []
+PLAYBOOK
+
+fake_ansible_playbook="$tmp_dir/ansible-playbook"
+cat >"$fake_ansible_playbook" <<'SHELL'
+#!/bin/sh
+set -eu
+printf '%s\n' "$*" >>"$ANSIBLE_LOG"
+SHELL
+chmod +x "$fake_ansible_playbook"
+
+if ! (
+	cd "$repo_root"
+	ANSIBLE_LOG="$ansible_log" \
+	ANSIBLE_PLAYBOOK="$fake_ansible_playbook" \
+	ANSIBLE_PLAYBOOK_DIR="$ansible_playbook_dir" \
+		sh scripts/validate-ansible-playbooks.sh \
+		>"$ansible_syntax_output" 2>&1
+); then
+	cat "$ansible_syntax_output" >&2
+	exit 1
+fi
+
+if ! grep -q -- "--syntax-check $ansible_playbook_dir/site.yml" "$ansible_log"; then
+	cat "$ansible_syntax_output" >&2
+	cat "$ansible_log" >&2
+	echo "Expected Ansible validation to run syntax-check for non-destructive playbooks." >&2
+	exit 1
+fi
+
+if grep -q "destroy-cluster" "$ansible_log"; then
+	cat "$ansible_log" >&2
+	echo "Expected Ansible validation to exclude destructive playbooks." >&2
+	exit 1
+fi
+
+: >"$ansible_log"
+if ! (
+	cd "$repo_root"
+	ANSIBLE_LOG="$ansible_log" \
+	ANSIBLE_PLAYBOOK="$fake_ansible_playbook" \
+	ANSIBLE_PLAYBOOK_DIR="$ansible_playbook_dir" \
+	ANSIBLE_VALIDATION_MODE=check \
+		sh scripts/validate-ansible-playbooks.sh \
+		>"$ansible_check_output" 2>&1
+); then
+	cat "$ansible_check_output" >&2
+	exit 1
+fi
+
+if ! grep -q -- "--check $ansible_playbook_dir/site.yml" "$ansible_log"; then
+	cat "$ansible_check_output" >&2
+	cat "$ansible_log" >&2
+	echo "Expected Ansible validation check mode to use --check." >&2
 	exit 1
 fi
