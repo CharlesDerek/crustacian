@@ -12,6 +12,9 @@ kubectl_dry_run_output="$tmp_dir/kubectl-dry-run.out"
 kubectl_log="$tmp_dir/kubectl.log"
 shell_failure_output="$tmp_dir/shell-failure.out"
 helm_empty_output="$tmp_dir/helm-empty.out"
+helm_output="$tmp_dir/helm.out"
+helm_failure_output="$tmp_dir/helm-failure.out"
+helm_log="$tmp_dir/helm.log"
 ansible_skip_output="$tmp_dir/ansible-skip.out"
 ansible_syntax_output="$tmp_dir/ansible-syntax.out"
 ansible_check_output="$tmp_dir/ansible-check.out"
@@ -293,6 +296,84 @@ fi
 if ! grep -q "No Helm charts found; skipping Helm validation." "$helm_empty_output"; then
 	cat "$helm_empty_output" >&2
 	echo "Expected validate-helm to skip safely when the chart directory is empty." >&2
+	exit 1
+fi
+
+chart_dir="$tmp_dir/charts/example-chart"
+mkdir -p "$chart_dir"
+
+fake_helm="$tmp_dir/helm"
+cat >"$fake_helm" <<'SHELL'
+#!/bin/sh
+set -eu
+printf '%s\n' "$*" >>"$HELM_LOG"
+case "$1" in
+	lint|template)
+		exit 0
+		;;
+	*)
+		echo "unexpected helm command: $*" >&2
+		exit 2
+		;;
+esac
+SHELL
+chmod +x "$fake_helm"
+
+if ! (
+	cd "$repo_root"
+	HELM_LOG="$helm_log" \
+		"${MAKE:-make}" --no-print-directory validate-helm \
+		HELM="$fake_helm" \
+		HELM_CHART_DIR="$tmp_dir/charts" \
+		>"$helm_output" 2>&1
+); then
+	cat "$helm_output" >&2
+	exit 1
+fi
+
+if ! grep -q -- "lint $chart_dir" "$helm_log"; then
+	cat "$helm_output" >&2
+	cat "$helm_log" >&2
+	echo "Expected validate-helm to lint discovered charts." >&2
+	exit 1
+fi
+
+if ! grep -q -- "template example-chart $chart_dir" "$helm_log"; then
+	cat "$helm_output" >&2
+	cat "$helm_log" >&2
+	echo "Expected validate-helm to render discovered charts without contacting a cluster." >&2
+	exit 1
+fi
+
+cat >"$fake_helm" <<'SHELL'
+#!/bin/sh
+set -eu
+printf '%s\n' "$*" >>"$HELM_LOG"
+case "$1" in
+	lint)
+		exit 1
+		;;
+	template)
+		exit 0
+		;;
+	*)
+		echo "unexpected helm command: $*" >&2
+		exit 2
+		;;
+esac
+SHELL
+chmod +x "$fake_helm"
+
+if (
+	cd "$repo_root"
+	HELM_LOG="$helm_log" \
+		"${MAKE:-make}" --no-print-directory validate-helm \
+		HELM="$fake_helm" \
+		HELM_CHART_DIR="$tmp_dir/charts" \
+		>"$helm_failure_output" 2>&1
+); then
+	cat "$helm_failure_output" >&2
+	echo "Expected validate-helm to fail when helm lint fails." >&2
 	exit 1
 fi
 
