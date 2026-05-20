@@ -131,6 +131,6 @@ validate-kubernetes:
 	status=0; \
 	while IFS= read -r manifest; do \
 		echo "Client-side dry-run validation for Kubernetes manifest: $$manifest"; \
-		KUBECONFIG="$(VALIDATION_KUBECONFIG)" "$(KUBECTL)" apply --dry-run=client --validate=false -f "$$manifest" >/dev/null || status=1; \
+		KUBECONFIG="$(VALIDATION_KUBECONFIG)" "$(KUBECTL)" --kubeconfig "$(VALIDATION_KUBECONFIG)" apply --dry-run=client --validate=false -f "$$manifest" >/dev/null || status=1; \
 	done <"$$manifests_file"; \
 	exit "$$status"
