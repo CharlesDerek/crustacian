@@ -84,7 +84,11 @@ validate-helm:
 	@if [ -d "$(HELM_CHART_DIR)" ]; then \
 		charts_file=$$(mktemp "$${TMPDIR:-/tmp}/crustacian-helm-charts.XXXXXX"); \
 		trap 'rm -f "$$charts_file"' EXIT HUP INT TERM; \
-		find "$(HELM_CHART_DIR)" -mindepth 1 -maxdepth 1 -type d -print | sort >"$$charts_file"; \
+		find "$(HELM_CHART_DIR)" -mindepth 1 -maxdepth 1 -type d -print | while IFS= read -r chart; do \
+			if [ -f "$$chart/Chart.yaml" ]; then \
+				printf '%s\n' "$$chart"; \
+			fi; \
+		done | sort >"$$charts_file"; \
 		if [ ! -s "$$charts_file" ]; then \
 			echo "No Helm charts found; skipping Helm validation."; \
 			exit 0; \

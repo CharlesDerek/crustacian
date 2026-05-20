@@ -367,6 +367,13 @@ fi
 
 chart_dir="$tmp_dir/charts/example-chart"
 mkdir -p "$chart_dir"
+cat >"$chart_dir/Chart.yaml" <<'CHART'
+apiVersion: v2
+name: example-chart
+version: 0.1.0
+CHART
+non_chart_dir="$tmp_dir/charts/not-a-chart"
+mkdir -p "$non_chart_dir"
 
 fake_helm="$tmp_dir/helm"
 cat >"$fake_helm" <<'SHELL'
@@ -408,6 +415,13 @@ if ! grep -q -- "template example-chart $chart_dir" "$helm_log"; then
 	cat "$helm_output" >&2
 	cat "$helm_log" >&2
 	echo "Expected validate-helm to render discovered charts without contacting a cluster." >&2
+	exit 1
+fi
+
+if grep -q -- "$non_chart_dir" "$helm_log"; then
+	cat "$helm_output" >&2
+	cat "$helm_log" >&2
+	echo "Expected validate-helm to ignore directories without Chart.yaml." >&2
 	exit 1
 fi
 
