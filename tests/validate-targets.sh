@@ -4,6 +4,7 @@ set -eu
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/crustacian-validation.XXXXXX")
 output_file="$tmp_dir/validation-runner.out"
+kubectl_skip_output="$tmp_dir/kubectl-skip.out"
 
 cleanup() {
 	rm -rf "$tmp_dir"
@@ -50,5 +51,31 @@ fi
 if ! grep -q "Non-mutating validation completed." "$output_file"; then
 	cat "$output_file" >&2
 	echo "Expected validation_runner to complete successfully." >&2
+	exit 1
+fi
+
+manifest_dir="$tmp_dir/manifests"
+mkdir "$manifest_dir"
+cat >"$manifest_dir/example.yaml" <<'MANIFEST'
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: validation-example
+MANIFEST
+
+if ! (
+	cd "$repo_root"
+	"${MAKE:-make}" --no-print-directory validate-kubernetes \
+		KUBECTL= \
+		KUBERNETES_MANIFEST_DIRS="$manifest_dir" \
+		>"$kubectl_skip_output" 2>&1
+); then
+	cat "$kubectl_skip_output" >&2
+	exit 1
+fi
+
+if ! grep -q "kubectl not found; skipping Kubernetes manifest validation." "$kubectl_skip_output"; then
+	cat "$kubectl_skip_output" >&2
+	echo "Expected validate-kubernetes to skip safely when kubectl is unavailable." >&2
 	exit 1
 fi
