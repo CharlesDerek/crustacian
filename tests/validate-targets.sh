@@ -7,6 +7,7 @@ output_file="$tmp_dir/validation-runner.out"
 target_output_file="$tmp_dir/validate-non-mutating.out"
 dry_run_output_file="$tmp_dir/validate-dry-run.out"
 script_output_file="$tmp_dir/validation-script.out"
+script_help_output_file="$tmp_dir/validation-script-help.out"
 kubectl_skip_output="$tmp_dir/kubectl-skip.out"
 kubectl_dry_run_output="$tmp_dir/kubectl-dry-run.out"
 kubectl_failure_output="$tmp_dir/kubectl-failure.out"
@@ -161,6 +162,27 @@ fi
 if ! grep -q "No Ansible playbook directory found; skipping Ansible validation." "$script_output_file"; then
 	cat "$script_output_file" >&2
 	echo "Expected scripts/validate-non-mutating.sh to include Ansible playbook validation." >&2
+	exit 1
+fi
+
+if ! (
+	cd "$repo_root"
+	sh scripts/validate-non-mutating.sh --help \
+		>"$script_help_output_file" 2>&1
+); then
+	cat "$script_help_output_file" >&2
+	exit 1
+fi
+
+if ! grep -q "Usage: scripts/validate-non-mutating.sh" "$script_help_output_file"; then
+	cat "$script_help_output_file" >&2
+	echo "Expected scripts/validate-non-mutating.sh --help to describe the validation entry point." >&2
+	exit 1
+fi
+
+if ! grep -q "kubectl client-side dry-run validation" "$script_help_output_file"; then
+	cat "$script_help_output_file" >&2
+	echo "Expected scripts/validate-non-mutating.sh --help to describe non-mutating Kubernetes validation." >&2
 	exit 1
 fi
 
