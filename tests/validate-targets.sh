@@ -7,6 +7,8 @@ output_file="$tmp_dir/validation-runner.out"
 target_output_file="$tmp_dir/validate-non-mutating.out"
 script_output_file="$tmp_dir/validation-script.out"
 kubectl_skip_output="$tmp_dir/kubectl-skip.out"
+kubectl_dry_run_output="$tmp_dir/kubectl-dry-run.out"
+kubectl_log="$tmp_dir/kubectl.log"
 shell_failure_output="$tmp_dir/shell-failure.out"
 ansible_skip_output="$tmp_dir/ansible-skip.out"
 ansible_syntax_output="$tmp_dir/ansible-syntax.out"
@@ -147,6 +149,34 @@ fi
 if ! grep -q "kubectl not found; skipping Kubernetes manifest validation." "$kubectl_skip_output"; then
 	cat "$kubectl_skip_output" >&2
 	echo "Expected validate-kubernetes to skip safely when kubectl is unavailable." >&2
+	exit 1
+fi
+
+fake_kubectl="$tmp_dir/kubectl"
+cat >"$fake_kubectl" <<'SHELL'
+#!/bin/sh
+set -eu
+printf 'KUBECONFIG=%s args=%s\n' "${KUBECONFIG:-}" "$*" >>"$KUBECTL_LOG"
+SHELL
+chmod +x "$fake_kubectl"
+
+if ! (
+	cd "$repo_root"
+	KUBECTL_LOG="$kubectl_log" \
+		"${MAKE:-make}" --no-print-directory validate-kubernetes \
+		KUBECTL="$fake_kubectl" \
+		VALIDATION_KUBECONFIG=/dev/null \
+		KUBERNETES_MANIFEST_DIRS="$manifest_dir" \
+		>"$kubectl_dry_run_output" 2>&1
+); then
+	cat "$kubectl_dry_run_output" >&2
+	exit 1
+fi
+
+if ! grep -q -- "KUBECONFIG=/dev/null args=apply --dry-run=client --validate=false -f $nested_manifest_dir/example.yaml" "$kubectl_log"; then
+	cat "$kubectl_dry_run_output" >&2
+	cat "$kubectl_log" >&2
+	echo "Expected validate-kubernetes to use client-side dry-run with an isolated kubeconfig." >&2
 	exit 1
 fi
 
