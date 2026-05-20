@@ -17,13 +17,15 @@ endif
 VALIDATE_TARGETS += validate-shell validate-ansible validate-helm validate-kubernetes validate-tests
 NON_MUTATING_VALIDATION_TARGETS := validate-files validate-shell validate-ansible validate-helm validate-kubernetes
 
-.PHONY: validate validate-local validate-non-mutating validation_runner validate-files validate-rust validate-shell validate-ansible validate-helm validate-kubernetes validate-tests
+.PHONY: validate validate-local validate-non-mutating validate-dry-run validation_runner validate-files validate-rust validate-shell validate-ansible validate-helm validate-kubernetes validate-tests
 
 validate validate-local: $(VALIDATE_TARGETS)
 	@echo "Non-mutating validation completed."
 
 validate-non-mutating: $(NON_MUTATING_VALIDATION_TARGETS)
 	@echo "Non-mutating validation completed."
+
+validate-dry-run: validate-non-mutating
 
 validation_runner: validate-non-mutating
 
