@@ -5,6 +5,7 @@ HELM ?= $(shell command -v helm 2>/dev/null)
 KUBECTL ?= $(shell command -v kubectl 2>/dev/null)
 VALIDATION_KUBECONFIG ?= /dev/null
 KUBERNETES_MANIFEST_DIRS ?= k8s kubernetes manifests deploy
+SHELL_VALIDATION_DIRS ?= scripts tests
 
 VALIDATE_TARGETS := validate-files
 ifneq ($(strip $(CARGO)),)
@@ -45,19 +46,23 @@ validate-rust:
 	fi
 
 validate-shell:
-	@files=$$(for dir in scripts tests; do \
+	@files_file=$$(mktemp "$${TMPDIR:-/tmp}/crustacian-shell-validation.XXXXXX"); \
+	trap 'rm -f "$$files_file"' EXIT HUP INT TERM; \
+	for dir in $(SHELL_VALIDATION_DIRS); do \
 		if [ -d "$$dir" ]; then \
 			find "$$dir" -type f \( -name '*.sh' -o -perm -111 \) -print; \
 		fi; \
-	done | sort); \
-	if [ -z "$$files" ]; then \
+	done | sort >"$$files_file"; \
+	if [ ! -s "$$files_file" ]; then \
 		echo "No shell scripts found; skipping shell syntax validation."; \
 		exit 0; \
 	fi; \
-	echo "$$files" | while IFS= read -r script; do \
+	status=0; \
+	while IFS= read -r script; do \
 		echo "Checking shell script syntax: $$script"; \
-		sh -n "$$script"; \
-	done
+		sh -n "$$script" || status=1; \
+	done <"$$files_file"; \
+	exit "$$status"
 
 validate-tests:
 	@echo "Running validation target self-checks..."

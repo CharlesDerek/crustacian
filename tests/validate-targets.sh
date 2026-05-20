@@ -6,6 +6,7 @@ tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/crustacian-validation.XXXXXX")
 output_file="$tmp_dir/validation-runner.out"
 script_output_file="$tmp_dir/validation-script.out"
 kubectl_skip_output="$tmp_dir/kubectl-skip.out"
+shell_failure_output="$tmp_dir/shell-failure.out"
 
 cleanup() {
 	rm -rf "$tmp_dir"
@@ -97,5 +98,29 @@ fi
 if ! grep -q "kubectl not found; skipping Kubernetes manifest validation." "$kubectl_skip_output"; then
 	cat "$kubectl_skip_output" >&2
 	echo "Expected validate-kubernetes to skip safely when kubectl is unavailable." >&2
+	exit 1
+fi
+
+bad_shell_dir="$tmp_dir/bad-shell"
+mkdir "$bad_shell_dir"
+cat >"$bad_shell_dir/invalid.sh" <<'SHELL'
+if true; then
+	echo "missing fi"
+SHELL
+
+if (
+	cd "$repo_root"
+	"${MAKE:-make}" --no-print-directory validate-shell \
+		SHELL_VALIDATION_DIRS="$bad_shell_dir" \
+		>"$shell_failure_output" 2>&1
+); then
+	cat "$shell_failure_output" >&2
+	echo "Expected validate-shell to fail when any checked shell script is invalid." >&2
+	exit 1
+fi
+
+if ! grep -q "Checking shell script syntax: $bad_shell_dir/invalid.sh" "$shell_failure_output"; then
+	cat "$shell_failure_output" >&2
+	echo "Expected validate-shell to report the invalid shell script path." >&2
 	exit 1
 fi
