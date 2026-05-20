@@ -5,14 +5,12 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+#[cfg(windows)]
 const DEFAULT_CLAM_DIR: &str = r"C:\Program Files\ClamAV";
+#[cfg(unix)]
+const DEFAULT_CLAM_DIR: &str = "/etc/clamav";
 
 fn main() {
-    if std::env::consts::OS != "windows" {
-        println!("This tool currently targets Windows only.");
-        std::process::exit(1);
-    }
-
     loop {
         println!("================ Crustacian Antivirus CLI ================");
         println!("1. Initialize / repair ClamAV environment");
@@ -40,44 +38,57 @@ fn init_cmd() {
     let clamdir = String::from(DEFAULT_CLAM_DIR);
     println!("=== Initialize / Repair ClamAV Environment ===");
 
-    if let Err(e) = make_dirs(&clamdir) {
-        eprintln!("[!] Failed to create base directories: {e}");
-        wait_for_enter();
-        return;
+    #[cfg(unix)]
+    {
+        println!("[+] Detecting Linux environment...");
+        if let Err(e) = init_linux(&clamdir) {
+            eprintln!("[!] Linux initialization failed: {e}");
+            wait_for_enter();
+            return;
+        }
     }
 
-    // 1) Ensure binaries exist (clamd.exe / freshclam.exe)
-    if let Err(e) = ensure_clam_binaries(&clamdir) {
-        eprintln!("[!] Could not ensure ClamAV binaries: {e}");
-        println!("    Please verify manual install and try again.");
-        wait_for_enter();
-        return;
-    }
+    #[cfg(windows)]
+    {
+        if let Err(e) = make_dirs(&clamdir) {
+            eprintln!("[!] Failed to create base directories: {e}");
+            wait_for_enter();
+            return;
+        }
 
-    // 2) Write config files (clamd.conf / freshclam.conf)
-    println!("[+] Writing config files...");
-    if let Err(e) = write_clam_confs(&clamdir) {
-        eprintln!("[!] Failed writing config files: {e}");
-        wait_for_enter();
-        return;
-    }
+        // 1) Ensure binaries exist (clamd.exe / freshclam.exe)
+        if let Err(e) = ensure_clam_binaries(&clamdir) {
+            eprintln!("[!] Could not ensure ClamAV binaries: {e}");
+            println!("    Please verify manual install and try again.");
+            wait_for_enter();
+            return;
+        }
 
-    // 3) Ensure DB is updated and present
-    println!("[+] Ensuring signature database is present and up to date…");
-    if let Err(e) = ensure_db_updated(&clamdir) {
-        eprintln!("[!] Failed to update/download signatures: {e}");
-        println!("    Check your network/DNS (database.clamav.net) and try again.");
-        wait_for_enter();
-        return;
-    }
+        // 2) Write config files (clamd.conf / freshclam.conf)
+        println!("[+] Writing config files...");
+        if let Err(e) = write_clam_confs(&clamdir) {
+            eprintln!("[!] Failed writing config files: {e}");
+            wait_for_enter();
+            return;
+        }
 
-    // 4) Ensure clamd service installed and running
-    println!("[+] Ensuring clamd service is installed and running…");
-    if let Err(e) = ensure_service_installed_and_running(&clamdir) {
-        eprintln!("[!] Failed to start clamd service: {e}");
-        println!("    Check clamd.log for details and try again.");
-        wait_for_enter();
-        return;
+        // 3) Ensure DB is updated and present
+        println!("[+] Ensuring signature database is present and up to date...");
+        if let Err(e) = ensure_db_updated(&clamdir) {
+            eprintln!("[!] Failed to update/download signatures: {e}");
+            println!("    Check your network/DNS (database.clamav.net) and try again.");
+            wait_for_enter();
+            return;
+        }
+
+        // 4) Ensure clamd service installed and running
+        println!("[+] Ensuring clamd service is installed and running...");
+        if let Err(e) = ensure_service_installed_and_running(&clamdir) {
+            eprintln!("[!] Failed to start clamd service: {e}");
+            println!("    Check clamd.log for details and try again.");
+            wait_for_enter();
+            return;
+        }
     }
 
     println!("\n✅ Environment looks good. You should be able to run scans now.");
@@ -85,15 +96,36 @@ fn init_cmd() {
     wait_for_enter();
 }
 
-// --- Scan, history, helpers, etc. remain mostly identical to the previous version ---
-// (Only init/installation logic is significantly upgraded.)
+#[cfg(unix)]
+fn init_linux(_clamdir: &str) -> io::Result<()> {
+    // 1) Check if clamav is installed
+    if !cmd_exists("clamscan") {
+        println!("[+] ClamAV not found. Installing via apt...");
+        run("sudo", &["apt-get", "update"])?;
+        run("sudo", &["apt-get", "install", "-y", "clamav", "clamav-daemon"])?;
+    } else {
+        println!("[+] ClamAV is already installed.");
+    }
+
+    // 2) Ensure freshclam is running/updated
+    println!("[+] Ensuring freshclam service is active...");
+    let _ = run("sudo", &["systemctl", "enable", "clamav-freshclam"]);
+    let _ = run("sudo", &["systemctl", "start", "clamav-freshclam"]);
+
+    // 3) Ensure clamd is running
+    println!("[+] Ensuring clamav-daemon is active...");
+    run("sudo", &["systemctl", "enable", "clamav-daemon"])?;
+    run("sudo", &["systemctl", "start", "clamav-daemon"])?;
+
+    Ok(())
+}
 
 fn scan_cmd() {
     let clamdir = String::from(DEFAULT_CLAM_DIR);
 
     println!("\nSelect scan type:");
-    println!("1. Quick (Documents, Downloads, Desktop, Temp)");
-    println!("2. Full (C:\\)");
+    println!("1. Quick (Home, Documents, Downloads, Desktop, Temp)");
+    println!("2. Full (Root /)");
     println!("3. Custom paths");
     print!("Choice: ");
     flush_stdout();
@@ -103,14 +135,28 @@ fn scan_cmd() {
 
     match sel.as_str() {
         "1" => {
-            let userprof = std::env::var("USERPROFILE").unwrap_or_else(|_| String::from(r"C:\Users\Public"));
-            scan_targets.push(Path::new(&userprof).join("Documents").to_string_lossy().into_owned());
-            scan_targets.push(Path::new(&userprof).join("Downloads").to_string_lossy().into_owned());
-            scan_targets.push(Path::new(&userprof).join("Desktop").to_string_lossy().into_owned());
-            scan_targets.push(r"C:\Windows\Temp".to_string());
+            #[cfg(windows)]
+            {
+                let userprof = std::env::var("USERPROFILE").unwrap_or_else(|_| String::from(r"C:\Users\Public"));
+                scan_targets.push(Path::new(&userprof).join("Documents").to_string_lossy().into_owned());
+                scan_targets.push(Path::new(&userprof).join("Downloads").to_string_lossy().into_owned());
+                scan_targets.push(Path::new(&userprof).join("Desktop").to_string_lossy().into_owned());
+                scan_targets.push(r"C:\Windows\Temp".to_string());
+            }
+            #[cfg(unix)]
+            {
+                let home = std::env::var("HOME").unwrap_or_else(|_| String::from("/home/cladmin"));
+                scan_targets.push(Path::new(&home).join("Documents").to_string_lossy().into_owned());
+                scan_targets.push(Path::new(&home).join("Downloads").to_string_lossy().into_owned());
+                scan_targets.push(Path::new(&home).join("Desktop").to_string_lossy().into_owned());
+                scan_targets.push("/tmp".to_string());
+            }
         }
         "2" => {
+            #[cfg(windows)]
             scan_targets.push("C:\\".to_string());
+            #[cfg(unix)]
+            scan_targets.push("/".to_string());
         }
         "3" => {
             print!("Enter semicolon-separated paths: ");
@@ -151,7 +197,7 @@ fn scan_cmd() {
 
     let mut total_files: i64 = 0;
     if want_count {
-        println!("Counting files (this is fast and improves ETA)…");
+        println!("Counting files (this is fast and improves ETA)...");
         let start_count = Instant::now();
         match pre_count_files(&scan_targets) {
             Ok(count) => {
@@ -171,8 +217,13 @@ fn scan_cmd() {
 
     let mut args: Vec<String> = vec!["--fdpass".into(), "--recursive".into()];
     if mode == "quarantine" {
-        let _ = fs::create_dir_all(r"C:\Quarantine");
-        args.push("--move=C:\\Quarantine".into());
+        #[cfg(windows)]
+        let q_dir = r"C:\Quarantine";
+        #[cfg(unix)]
+        let q_dir = "/var/lib/crustacian/quarantine";
+        
+        let _ = fs::create_dir_all(q_dir);
+        args.push(format!("--move={}", q_dir));
     } else if mode == "remove" {
         args.push("--remove".into());
     }
@@ -180,10 +231,21 @@ fn scan_cmd() {
         args.push(t.clone());
     }
 
-    println!("\nStarting scan… progress shows below.");
+    println!("\nStarting scan... progress shows below.");
 
-    let clamdscan_path = Path::new(&clamdir).join("clamdscan.exe");
-    let mut cmd = Command::new(clamdscan_path);
+    #[cfg(windows)]
+    let clamdscan_bin = "clamdscan.exe";
+    #[cfg(unix)]
+    let clamdscan_bin = "clamdscan";
+
+    let clamdscan_path = Path::new(&clamdir).join(clamdscan_bin);
+    // On Linux, clamdscan is usually in /usr/bin, so we might just use the name
+    let mut cmd = if cfg!(unix) {
+        Command::new(clamdscan_bin)
+    } else {
+        Command::new(clamdscan_path)
+    };
+    
     cmd.args(&args)
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit());
@@ -331,7 +393,7 @@ fn scan_cmd() {
         println!("No infections found.");
     }
 
-    println!("\nPress Enter to return to main menu…");
+    println!("\nPress Enter to return to main menu...");
     wait_for_enter();
 }
 
@@ -369,8 +431,9 @@ fn history_menu() {
 
 // ========== NEW / IMPROVED INIT HELPERS ==========
 
+#[cfg(windows)]
 fn ensure_clam_binaries(clamdir: &str) -> io::Result<()> {
-    println!("[+] Checking for clamd.exe and freshclam.exe…");
+    println!("[+] Checking for clamd.exe and freshclam.exe...");
 
     let clamd = Path::new(clamdir).join("clamd.exe");
     let fresh = Path::new(clamdir).join("freshclam.exe");
@@ -380,7 +443,7 @@ fn ensure_clam_binaries(clamdir: &str) -> io::Result<()> {
         return Ok(());
     }
 
-    println!("    ClamAV binaries not found. Trying winget/choco install…");
+    println!("    ClamAV binaries not found. Trying winget/choco install...");
     try_install_clamav()?;
 
     // Re-check after install attempt
@@ -398,11 +461,12 @@ fn ensure_clam_binaries(clamdir: &str) -> io::Result<()> {
     }
 }
 
+#[cfg(windows)]
 fn ensure_db_updated(clamdir: &str) -> io::Result<()> {
     let max_attempts = 3;
     let freshclam_path = Path::new(clamdir).join("freshclam.exe");
     for attempt in 1..=max_attempts {
-        println!("    [Attempt {}/{}] Running freshclam…", attempt, max_attempts);
+        println!("    [Attempt {}/{}] Running freshclam...", attempt, max_attempts);
         let status = Command::new(&freshclam_path)
             .arg("-v")
             .status()
@@ -419,7 +483,7 @@ fn ensure_db_updated(clamdir: &str) -> io::Result<()> {
             return Ok(());
         }
 
-        println!("    freshclam did not complete successfully or DB missing. Retrying in 10s…");
+        println!("    freshclam did not complete successfully or DB missing. Retrying in 10s...");
         std::thread::sleep(Duration::from_secs(10));
     }
 
@@ -435,12 +499,20 @@ fn ensure_db_updated(clamdir: &str) -> io::Result<()> {
 }
 
 fn db_is_present(clamdir: &str) -> bool {
-    let candidates = vec![
+    let mut candidates = vec![
         Path::new(clamdir).join("db"),
         Path::new(clamdir).join("database"),
-        PathBuf::from(r"C:\ProgramData\.clamwin\db"),
-        PathBuf::from(r"C:\ProgramData\clamav-db"),
     ];
+
+    #[cfg(windows)]
+    {
+        candidates.push(PathBuf::from(r"C:\ProgramData\.clamwin\db"));
+        candidates.push(PathBuf::from(r"C:\ProgramData\clamav-db"));
+    }
+    #[cfg(unix)]
+    {
+        candidates.push(PathBuf::from("/var/lib/clamav"));
+    }
 
     for dir in candidates {
         if let Ok(entries) = fs::read_dir(&dir) {
@@ -463,12 +535,13 @@ fn db_is_present(clamdir: &str) -> bool {
     false
 }
 
+#[cfg(windows)]
 fn ensure_service_installed_and_running(clamdir: &str) -> io::Result<()> {
     let clamd_exe = Path::new(clamdir).join("clamd.exe");
 
     // 1) Ensure service exists
     if !service_exists("clamd") {
-        println!("    clamd service not found; installing…");
+        println!("    clamd service not found; installing...");
         let status = Command::new(&clamd_exe).arg("--install").status();
         if !status.map(|s| s.success()).unwrap_or(false) {
             return Err(io::Error::new(
@@ -482,7 +555,7 @@ fn ensure_service_installed_and_running(clamdir: &str) -> io::Result<()> {
 
     // 2) Make sure the service is not disabled
     if service_is_disabled("clamd") {
-        println!("    clamd service is disabled; re-enabling (start = demand)…");
+        println!("    clamd service is disabled; re-enabling (start = demand)...");
         let status = Command::new("sc")
             .args(["config", "clamd", "start=", "demand"])
             .status();
@@ -495,7 +568,7 @@ fn ensure_service_installed_and_running(clamdir: &str) -> io::Result<()> {
     }
 
     // 3) Try to start the service and capture output if it fails
-    println!("    Starting clamd service…");
+    println!("    Starting clamd service...");
     let output = Command::new("cmd")
         .args(["/c", "net", "start", "clamd"])
         .output()?;
@@ -532,6 +605,7 @@ fn ensure_service_installed_and_running(clamdir: &str) -> io::Result<()> {
     }
 }
 
+#[cfg(windows)]
 fn service_exists(name: &str) -> bool {
     Command::new("sc")
         .args(["query", name])
@@ -542,6 +616,7 @@ fn service_exists(name: &str) -> bool {
         .unwrap_or(false)
 }
 
+#[cfg(windows)]
 fn service_is_disabled(name: &str) -> bool {
     if let Ok(output) = Command::new("sc").args(["qc", name]).output() {
         let stdout = String::from_utf8_lossy(&output.stdout).to_lowercase();
@@ -583,8 +658,16 @@ fn make_dirs(clamdir: &str) -> io::Result<()> {
 }
 
 fn base_scans_dir() -> PathBuf {
-    let user = std::env::var("USERPROFILE").unwrap_or_else(|_| String::from(r"C:\Users\Public"));
-    Path::new(&user).join("Documents").join("cyberplexs-scans")
+    #[cfg(windows)]
+    {
+        let user = std::env::var("USERPROFILE").unwrap_or_else(|_| String::from(r"C:\Users\Public"));
+        Path::new(&user).join("Documents").join("cyberplexs-scans")
+    }
+    #[cfg(unix)]
+    {
+        let home = std::env::var("HOME").unwrap_or_else(|_| String::from("/home/cladmin"));
+        Path::new(&home).join("Documents").join("cyberplexs-scans")
+    }
 }
 
 fn ensure_scan_dir(stamp: &str) -> PathBuf {
@@ -627,20 +710,34 @@ fn run_silent(name: &str, args: &[&str]) -> io::Result<()> {
 }
 
 fn cmd_exists(name: &str) -> bool {
-    Command::new("cmd")
-        .args(["/C", "where", name])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    #[cfg(windows)]
+    {
+        Command::new("cmd")
+            .args(["/C", "where", name])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+    #[cfg(unix)]
+    {
+        Command::new("which")
+            .arg(name)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
 }
 
+#[cfg(windows)]
 fn try_install_clamav() -> io::Result<()> {
     if cmd_exists("winget") {
-        println!("    [winget] Searching for ClamAV…");
+        println!("    [winget] Searching for ClamAV...");
         let _ = run("winget", &["search", "clamav"]);
-        println!("    [winget] Trying install… (may require admin approval)");
+        println!("    [winget] Trying install... (may require admin approval)");
         if run(
             "winget",
             &[
@@ -659,7 +756,7 @@ fn try_install_clamav() -> io::Result<()> {
     }
 
     if cmd_exists("choco") {
-        println!("    [choco] Trying install clamav…");
+        println!("    [choco] Trying install clamav...");
         if run("choco", &["install", "clamav", "-y"]).is_ok() {
             return Ok(());
         }
@@ -671,6 +768,7 @@ fn try_install_clamav() -> io::Result<()> {
     ))
 }
 
+#[cfg(windows)]
 fn write_clam_confs(clamdir: &str) -> io::Result<()> {
     let clamd_conf = CLAMD_CONF_TEMPLATE.replace("\nExample\n", "\n# Example (disabled)\n# Example\n");
     let fresh_conf =
@@ -705,12 +803,25 @@ fn wait_for_clam_ready(log_path: &Path, timeout: Duration) -> bool {
 fn pre_count_files(targets: &[String]) -> io::Result<i64> {
     let mut total: i64 = 0;
     let mut skip: HashMap<String, bool> = HashMap::new();
+    
+    #[cfg(windows)]
     for s in &[
         r"c:\windows\winsxs",
         r"c:\windows\softwaredistribution",
         r"c:\windows\system32\driverstore",
         r"c:\$recycle.bin",
         r"c:\system volume information",
+    ] {
+        skip.insert(s.to_string(), true);
+    }
+    #[cfg(unix)]
+    for s in &[
+        "/proc",
+        "/sys",
+        "/dev",
+        "/run",
+        "/var/cache",
+        "/var/lib/apt",
     ] {
         skip.insert(s.to_string(), true);
     }
@@ -733,6 +844,7 @@ fn walk_and_count(path: &Path, skip: &HashMap<String, bool>, total: &mut i64) {
                 .to_string_lossy()
                 .to_lowercase()
                 .trim_end_matches('\\')
+                .trim_end_matches('/')
                 .to_string();
             if skip.get(&lower).copied().unwrap_or(false) {
                 return;
