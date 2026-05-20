@@ -4,6 +4,7 @@ set -eu
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/crustacian-validation.XXXXXX")
 output_file="$tmp_dir/validation-runner.out"
+script_output_file="$tmp_dir/validation-script.out"
 kubectl_skip_output="$tmp_dir/kubectl-skip.out"
 
 cleanup() {
@@ -51,6 +52,25 @@ fi
 if ! grep -q "Non-mutating validation completed." "$output_file"; then
 	cat "$output_file" >&2
 	echo "Expected validation_runner to complete successfully." >&2
+	exit 1
+fi
+
+if ! (
+	cd "$repo_root"
+	MAKE="${MAKE:-make}" sh scripts/validate-non-mutating.sh \
+		CARGO= \
+		HELM= \
+		KUBECTL= \
+		KUBERNETES_MANIFEST_DIRS="$tmp_dir/missing-manifests" \
+		>"$script_output_file" 2>&1
+); then
+	cat "$script_output_file" >&2
+	exit 1
+fi
+
+if ! grep -q "Non-mutating validation completed." "$script_output_file"; then
+	cat "$script_output_file" >&2
+	echo "Expected scripts/validate-non-mutating.sh to complete successfully." >&2
 	exit 1
 fi
 
