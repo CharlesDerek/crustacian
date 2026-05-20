@@ -20,3 +20,4 @@ this validation path.
 | `helm` | Not detected | Required only for Helm chart linting, rendering, or other Helm-specific validation workflows. |
 | `ansible-playbook` | Not detected | Required only for Ansible playbook syntax-check or check-mode validation workflows. |
 | `yq` | Not detected | Required only for YAML query, transformation, or validation workflows that explicitly call `yq`. |
+| `jq` | Not detected | Required only for JSON query, transformation, or validation workflows that explicitly call `jq`. |
