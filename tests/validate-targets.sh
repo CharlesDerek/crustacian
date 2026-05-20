@@ -15,6 +15,7 @@ kubectl_kubeconfig_output="$tmp_dir/kubectl-kubeconfig.out"
 kubectl_log="$tmp_dir/kubectl.log"
 shell_failure_output="$tmp_dir/shell-failure.out"
 markdown_skip_output="$tmp_dir/markdown-skip.out"
+markdown_default_output="$tmp_dir/markdown-default.out"
 markdown_output="$tmp_dir/markdown.out"
 markdown_log="$tmp_dir/markdownlint.log"
 helm_empty_output="$tmp_dir/helm-empty.out"
@@ -429,6 +430,25 @@ if ! grep -q -- "$markdown_dir/example.md" "$markdown_log"; then
 	cat "$markdown_output" >&2
 	cat "$markdown_log" >&2
 	echo "Expected validate-docs to run markdownlint on discovered Markdown files." >&2
+	exit 1
+fi
+
+: >"$markdown_log"
+if ! (
+	cd "$repo_root"
+	MARKDOWN_LOG="$markdown_log" \
+		"${MAKE:-make}" --no-print-directory validate-docs \
+		MARKDOWNLINT="$fake_markdownlint" \
+		>"$markdown_default_output" 2>&1
+); then
+	cat "$markdown_default_output" >&2
+	exit 1
+fi
+
+if ! grep -q -- "ReadMe.md" "$markdown_log"; then
+	cat "$markdown_default_output" >&2
+	cat "$markdown_log" >&2
+	echo "Expected validate-docs defaults to include the checked-in ReadMe.md file." >&2
 	exit 1
 fi
 
