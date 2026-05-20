@@ -93,33 +93,27 @@ validate-helm:
 	fi
 
 validate-kubernetes:
-	@manifest_found=0; \
+	@manifests_file=$$(mktemp "$${TMPDIR:-/tmp}/crustacian-kubernetes-manifests.XXXXXX"); \
+	trap 'rm -f "$$manifests_file"' EXIT HUP INT TERM; \
 	dir_found=0; \
 	for dir in $(KUBERNETES_MANIFEST_DIRS); do \
 		if [ -d "$$dir" ]; then \
 			dir_found=1; \
-			for manifest in "$$dir"/*.yaml "$$dir"/*.yml; do \
-				[ -e "$$manifest" ] || continue; \
-				manifest_found=1; \
-			done; \
+			find "$$dir" -type f \( -name '*.yaml' -o -name '*.yml' \) -print >>"$$manifests_file"; \
 		fi; \
 	done; \
+	sort "$$manifests_file" -o "$$manifests_file"; \
 	if [ "$$dir_found" -eq 0 ]; then \
 		echo "No Kubernetes manifest directories found; skipping Kubernetes validation."; \
 		exit 0; \
-	elif [ "$$manifest_found" -eq 0 ]; then \
+	elif [ ! -s "$$manifests_file" ]; then \
 		echo "No Kubernetes manifest files found; skipping Kubernetes validation."; \
 		exit 0; \
 	elif [ -z "$(KUBECTL)" ]; then \
 		echo "kubectl not found; skipping Kubernetes manifest validation."; \
 		exit 0; \
 	fi; \
-	for dir in $(KUBERNETES_MANIFEST_DIRS); do \
-		if [ -d "$$dir" ]; then \
-			for manifest in "$$dir"/*.yaml "$$dir"/*.yml; do \
-				[ -e "$$manifest" ] || continue; \
-				echo "Client-side dry-run validation for Kubernetes manifest: $$manifest"; \
-				KUBECONFIG="$(VALIDATION_KUBECONFIG)" "$(KUBECTL)" apply --dry-run=client --validate=false -f "$$manifest" >/dev/null; \
-			done; \
-		fi; \
-	done
+	while IFS= read -r manifest; do \
+		echo "Client-side dry-run validation for Kubernetes manifest: $$manifest"; \
+		KUBECONFIG="$(VALIDATION_KUBECONFIG)" "$(KUBECTL)" apply --dry-run=client --validate=false -f "$$manifest" >/dev/null; \
+	done <"$$manifests_file"
