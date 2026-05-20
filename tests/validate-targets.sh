@@ -92,8 +92,9 @@ if ! grep -q "No Ansible playbook directory found; skipping Ansible validation."
 fi
 
 manifest_dir="$tmp_dir/manifests"
-mkdir "$manifest_dir"
-cat >"$manifest_dir/example.yaml" <<'MANIFEST'
+nested_manifest_dir="$manifest_dir/nested"
+mkdir -p "$nested_manifest_dir"
+cat >"$nested_manifest_dir/example.yaml" <<'MANIFEST'
 apiVersion: v1
 kind: ConfigMap
 metadata:
