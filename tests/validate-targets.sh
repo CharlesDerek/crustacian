@@ -16,6 +16,8 @@ ansible_skip_output="$tmp_dir/ansible-skip.out"
 ansible_syntax_output="$tmp_dir/ansible-syntax.out"
 ansible_check_output="$tmp_dir/ansible-check.out"
 ansible_log="$tmp_dir/ansible-playbook.log"
+git_diff_output="$tmp_dir/git-diff-check.out"
+git_log="$tmp_dir/git.log"
 
 cleanup() {
 	rm -rf "$tmp_dir"
@@ -155,6 +157,43 @@ fi
 if ! grep -q "No Ansible playbook directory found; skipping Ansible validation." "$script_output_file"; then
 	cat "$script_output_file" >&2
 	echo "Expected scripts/validate-non-mutating.sh to include Ansible playbook validation." >&2
+	exit 1
+fi
+
+fake_git="$tmp_dir/git"
+cat >"$fake_git" <<'SHELL'
+#!/bin/sh
+set -eu
+printf '%s\n' "$*" >>"$GIT_LOG"
+case "$*" in
+	"rev-parse --is-inside-work-tree")
+		printf 'true\n'
+		;;
+	"diff --check")
+		;;
+	*)
+		echo "unexpected git args: $*" >&2
+		exit 2
+		;;
+esac
+SHELL
+chmod +x "$fake_git"
+
+if ! (
+	cd "$repo_root"
+	GIT_LOG="$git_log" \
+		"${MAKE:-make}" --no-print-directory validate-files \
+		GIT="$fake_git" \
+		>"$git_diff_output" 2>&1
+); then
+	cat "$git_diff_output" >&2
+	exit 1
+fi
+
+if ! grep -q "diff --check" "$git_log"; then
+	cat "$git_diff_output" >&2
+	cat "$git_log" >&2
+	echo "Expected validate-files to run git diff --check." >&2
 	exit 1
 fi
 
