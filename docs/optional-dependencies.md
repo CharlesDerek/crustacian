@@ -14,7 +14,9 @@ descriptive alias for the same non-mutating checks.
 Run `scripts/validate-non-mutating.sh` for the same Makefile validation from a
 script entry point. The Ansible check uses `ansible-playbook --syntax-check` by
 default, or `ansible-playbook --check` when `ANSIBLE_VALIDATION_MODE=check` is
-set. Destructive playbooks are excluded from this validation path.
+set. Destructive playbooks are excluded from this validation path. Helm chart
+validation reads `charts` by default and can be pointed at another directory
+with `HELM_CHART_DIR`.
 
 | Dependency | Status on endpoint host | Notes |
 | ---------- | ----------------------- | ----- |
