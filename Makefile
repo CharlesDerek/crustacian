@@ -4,21 +4,23 @@ GIT ?= $(shell command -v git 2>/dev/null)
 HELM ?= $(shell command -v helm 2>/dev/null)
 KUBECTL ?= $(shell command -v kubectl 2>/dev/null)
 ANSIBLE_PLAYBOOK ?= $(shell command -v ansible-playbook 2>/dev/null)
+MARKDOWNLINT ?= $(shell command -v markdownlint 2>/dev/null)
 ANSIBLE_PLAYBOOK_DIR ?= ansible/playbooks
 ANSIBLE_VALIDATION_MODE ?= syntax-check
 HELM_CHART_DIR ?= charts
 VALIDATION_KUBECONFIG ?= /dev/null
 KUBERNETES_MANIFEST_DIRS ?= k8s kubernetes manifests deploy
 SHELL_VALIDATION_DIRS ?= scripts tests
+MARKDOWN_VALIDATION_PATHS ?= README.md docs
 
 VALIDATE_TARGETS := validate-files
 ifneq ($(strip $(CARGO)),)
 VALIDATE_TARGETS += validate-rust
 endif
 VALIDATE_TARGETS += validate-shell validate-ansible validate-helm validate-kubernetes validate-tests
-NON_MUTATING_VALIDATION_TARGETS := validate-files validate-shell validate-ansible validate-helm validate-kubernetes
+NON_MUTATING_VALIDATION_TARGETS := validate-files validate-shell validate-docs validate-ansible validate-helm validate-kubernetes
 
-.PHONY: validate validate-local validate-non-mutating validate-dry-run validation_runner validate-files validate-rust validate-shell validate-ansible validate-helm validate-kubernetes validate-tests
+.PHONY: validate validate-local validate-non-mutating validate-dry-run validation_runner validate-files validate-rust validate-shell validate-docs validate-ansible validate-helm validate-kubernetes validate-tests
 
 validate validate-local: $(VALIDATE_TARGETS)
 	@echo "Non-mutating validation completed."
@@ -69,6 +71,26 @@ validate-shell:
 		sh -n "$$script" || status=1; \
 	done <"$$files_file"; \
 	exit "$$status"
+
+validate-docs:
+	@docs_file=$$(mktemp "$${TMPDIR:-/tmp}/crustacian-doc-validation.XXXXXX"); \
+	trap 'rm -f "$$docs_file"' EXIT HUP INT TERM; \
+	for path in $(MARKDOWN_VALIDATION_PATHS); do \
+		if [ -f "$$path" ]; then \
+			printf '%s\n' "$$path"; \
+		elif [ -d "$$path" ]; then \
+			find "$$path" -type f \( -name '*.md' -o -name '*.markdown' \) -print; \
+		fi; \
+	done | sort >"$$docs_file"; \
+	if [ ! -s "$$docs_file" ]; then \
+		echo "No Markdown documents found; skipping documentation validation."; \
+		exit 0; \
+	elif [ -z "$(MARKDOWNLINT)" ] || ! command -v "$(MARKDOWNLINT)" >/dev/null 2>&1; then \
+		echo "markdownlint not found; skipping documentation validation."; \
+		exit 0; \
+	fi; \
+	echo "Running Markdown validation with markdownlint..."; \
+	xargs "$(MARKDOWNLINT)" <"$$docs_file"
 
 validate-tests:
 	@echo "Running validation target self-checks..."

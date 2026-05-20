@@ -14,6 +14,9 @@ kubectl_failure_output="$tmp_dir/kubectl-failure.out"
 kubectl_kubeconfig_output="$tmp_dir/kubectl-kubeconfig.out"
 kubectl_log="$tmp_dir/kubectl.log"
 shell_failure_output="$tmp_dir/shell-failure.out"
+markdown_skip_output="$tmp_dir/markdown-skip.out"
+markdown_output="$tmp_dir/markdown.out"
+markdown_log="$tmp_dir/markdownlint.log"
 helm_empty_output="$tmp_dir/helm-empty.out"
 helm_output="$tmp_dir/helm.out"
 helm_failure_output="$tmp_dir/helm-failure.out"
@@ -36,6 +39,7 @@ if ! (
 		CARGO= \
 		HELM= \
 		KUBECTL= \
+		MARKDOWNLINT= \
 		KUBERNETES_MANIFEST_DIRS="$tmp_dir/missing-manifests" \
 		>"$output_file" 2>&1
 ); then
@@ -67,6 +71,12 @@ if ! grep -q "Checking shell script syntax: tests/validate-targets.sh" "$output_
 	exit 1
 fi
 
+if ! grep -q "markdownlint not found; skipping documentation validation." "$output_file"; then
+	cat "$output_file" >&2
+	echo "Expected validation_runner to include documentation validation with a safe skip when markdownlint is unavailable." >&2
+	exit 1
+fi
+
 if ! grep -q "No Ansible playbook directory found; skipping Ansible validation." "$output_file"; then
 	cat "$output_file" >&2
 	echo "Expected validation_runner to include Ansible playbook validation." >&2
@@ -85,6 +95,7 @@ if ! (
 		CARGO= \
 		HELM= \
 		KUBECTL= \
+		MARKDOWNLINT= \
 		KUBERNETES_MANIFEST_DIRS="$tmp_dir/missing-manifests" \
 		>"$target_output_file" 2>&1
 ); then
@@ -104,6 +115,12 @@ if grep -q "Running Rust validation" "$target_output_file"; then
 	exit 1
 fi
 
+if ! grep -q "markdownlint not found; skipping documentation validation." "$target_output_file"; then
+	cat "$target_output_file" >&2
+	echo "Expected validate-non-mutating to include documentation validation with a safe skip when markdownlint is unavailable." >&2
+	exit 1
+fi
+
 if ! grep -q "Non-mutating validation completed." "$target_output_file"; then
 	cat "$target_output_file" >&2
 	echo "Expected validate-non-mutating to complete successfully." >&2
@@ -116,6 +133,7 @@ if ! (
 		CARGO= \
 		HELM= \
 		KUBECTL= \
+		MARKDOWNLINT= \
 		KUBERNETES_MANIFEST_DIRS="$tmp_dir/missing-manifests" \
 		>"$dry_run_output_file" 2>&1
 ); then
@@ -135,6 +153,12 @@ if grep -q "Running Rust validation" "$dry_run_output_file"; then
 	exit 1
 fi
 
+if ! grep -q "markdownlint not found; skipping documentation validation." "$dry_run_output_file"; then
+	cat "$dry_run_output_file" >&2
+	echo "Expected validate-dry-run to include documentation validation with a safe skip when markdownlint is unavailable." >&2
+	exit 1
+fi
+
 if ! grep -q "Non-mutating validation completed." "$dry_run_output_file"; then
 	cat "$dry_run_output_file" >&2
 	echo "Expected validate-dry-run to complete successfully." >&2
@@ -147,6 +171,7 @@ if ! (
 		CARGO= \
 		HELM= \
 		KUBECTL= \
+		MARKDOWNLINT= \
 		KUBERNETES_MANIFEST_DIRS="$tmp_dir/missing-manifests" \
 		>"$script_output_file" 2>&1
 ); then
@@ -166,6 +191,12 @@ if ! grep -q "No Ansible playbook directory found; skipping Ansible validation."
 	exit 1
 fi
 
+if ! grep -q "markdownlint not found; skipping documentation validation." "$script_output_file"; then
+	cat "$script_output_file" >&2
+	echo "Expected scripts/validate-non-mutating.sh to include documentation validation with a safe skip when markdownlint is unavailable." >&2
+	exit 1
+fi
+
 if ! (
 	cd "$repo_root"
 	sh scripts/validate-non-mutating.sh --help \
@@ -181,9 +212,15 @@ if ! grep -q "Usage: scripts/validate-non-mutating.sh" "$script_help_output_file
 	exit 1
 fi
 
-if ! grep -q "kubectl client-side dry-run validation" "$script_help_output_file"; then
+if ! grep -q "client-side dry-run" "$script_help_output_file"; then
 	cat "$script_help_output_file" >&2
 	echo "Expected scripts/validate-non-mutating.sh --help to describe non-mutating Kubernetes validation." >&2
+	exit 1
+fi
+
+if ! grep -q "Markdown linting" "$script_help_output_file"; then
+	cat "$script_help_output_file" >&2
+	echo "Expected scripts/validate-non-mutating.sh --help to describe documentation validation." >&2
 	exit 1
 fi
 
@@ -342,6 +379,56 @@ fi
 if ! grep -q "Checking shell script syntax: $bad_shell_dir/invalid.sh" "$shell_failure_output"; then
 	cat "$shell_failure_output" >&2
 	echo "Expected validate-shell to report the invalid shell script path." >&2
+	exit 1
+fi
+
+if ! (
+	cd "$repo_root"
+	"${MAKE:-make}" --no-print-directory validate-docs \
+		MARKDOWNLINT= \
+		MARKDOWN_VALIDATION_PATHS="$tmp_dir/missing-docs" \
+		>"$markdown_skip_output" 2>&1
+); then
+	cat "$markdown_skip_output" >&2
+	exit 1
+fi
+
+if ! grep -q "No Markdown documents found; skipping documentation validation." "$markdown_skip_output"; then
+	cat "$markdown_skip_output" >&2
+	echo "Expected validate-docs to skip safely when there are no Markdown documents." >&2
+	exit 1
+fi
+
+markdown_dir="$tmp_dir/docs"
+mkdir "$markdown_dir"
+cat >"$markdown_dir/example.md" <<'MARKDOWN'
+# Example
+MARKDOWN
+
+fake_markdownlint="$tmp_dir/markdownlint"
+cat >"$fake_markdownlint" <<'SHELL'
+#!/bin/sh
+set -eu
+printf '%s\n' "$*" >>"$MARKDOWN_LOG"
+SHELL
+chmod +x "$fake_markdownlint"
+
+if ! (
+	cd "$repo_root"
+	MARKDOWN_LOG="$markdown_log" \
+		"${MAKE:-make}" --no-print-directory validate-docs \
+		MARKDOWNLINT="$fake_markdownlint" \
+		MARKDOWN_VALIDATION_PATHS="$markdown_dir" \
+		>"$markdown_output" 2>&1
+); then
+	cat "$markdown_output" >&2
+	exit 1
+fi
+
+if ! grep -q -- "$markdown_dir/example.md" "$markdown_log"; then
+	cat "$markdown_output" >&2
+	cat "$markdown_log" >&2
+	echo "Expected validate-docs to run markdownlint on discovered Markdown files." >&2
 	exit 1
 fi
 
