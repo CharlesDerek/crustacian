@@ -11,6 +11,7 @@ kubectl_skip_output="$tmp_dir/kubectl-skip.out"
 kubectl_dry_run_output="$tmp_dir/kubectl-dry-run.out"
 kubectl_log="$tmp_dir/kubectl.log"
 shell_failure_output="$tmp_dir/shell-failure.out"
+helm_empty_output="$tmp_dir/helm-empty.out"
 ansible_skip_output="$tmp_dir/ansible-skip.out"
 ansible_syntax_output="$tmp_dir/ansible-syntax.out"
 ansible_check_output="$tmp_dir/ansible-check.out"
@@ -40,7 +41,7 @@ if ! grep -q "No Kubernetes manifest directories found; skipping Kubernetes vali
 	exit 1
 fi
 
-if ! grep -Eq "(charts/ not found|helm not found); skipping Helm validation." "$output_file"; then
+if ! grep -Eq "(charts not found|helm not found); skipping Helm validation." "$output_file"; then
 	cat "$output_file" >&2
 	echo "Expected validation_runner to skip Helm validation when Helm validation cannot run." >&2
 	exit 1
@@ -233,6 +234,26 @@ fi
 if ! grep -q "Checking shell script syntax: $bad_shell_dir/invalid.sh" "$shell_failure_output"; then
 	cat "$shell_failure_output" >&2
 	echo "Expected validate-shell to report the invalid shell script path." >&2
+	exit 1
+fi
+
+empty_chart_dir="$tmp_dir/empty-charts"
+mkdir "$empty_chart_dir"
+
+if ! (
+	cd "$repo_root"
+	"${MAKE:-make}" --no-print-directory validate-helm \
+		HELM= \
+		HELM_CHART_DIR="$empty_chart_dir" \
+		>"$helm_empty_output" 2>&1
+); then
+	cat "$helm_empty_output" >&2
+	exit 1
+fi
+
+if ! grep -q "No Helm charts found; skipping Helm validation." "$helm_empty_output"; then
+	cat "$helm_empty_output" >&2
+	echo "Expected validate-helm to skip safely when the chart directory is empty." >&2
 	exit 1
 fi
 

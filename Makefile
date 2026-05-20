@@ -6,6 +6,7 @@ KUBECTL ?= $(shell command -v kubectl 2>/dev/null)
 ANSIBLE_PLAYBOOK ?= $(shell command -v ansible-playbook 2>/dev/null)
 ANSIBLE_PLAYBOOK_DIR ?= ansible/playbooks
 ANSIBLE_VALIDATION_MODE ?= syntax-check
+HELM_CHART_DIR ?= charts
 VALIDATION_KUBECONFIG ?= /dev/null
 KUBERNETES_MANIFEST_DIRS ?= k8s kubernetes manifests deploy
 SHELL_VALIDATION_DIRS ?= scripts tests
@@ -80,18 +81,25 @@ validate-ansible:
 		sh scripts/validate-ansible-playbooks.sh
 
 validate-helm:
-	@if [ -d charts ]; then \
+	@if [ -d "$(HELM_CHART_DIR)" ]; then \
+		charts_file=$$(mktemp "$${TMPDIR:-/tmp}/crustacian-helm-charts.XXXXXX"); \
+		trap 'rm -f "$$charts_file"' EXIT HUP INT TERM; \
+		find "$(HELM_CHART_DIR)" -mindepth 1 -maxdepth 1 -type d -print | sort >"$$charts_file"; \
+		if [ ! -s "$$charts_file" ]; then \
+			echo "No Helm charts found; skipping Helm validation."; \
+			exit 0; \
+		fi; \
 		if [ -n "$(HELM)" ] && command -v "$(HELM)" >/dev/null 2>&1; then \
-			find charts -mindepth 1 -maxdepth 1 -type d -print | sort | while IFS= read -r chart; do \
+			while IFS= read -r chart; do \
 				echo "Validating Helm chart: $$chart"; \
 				"$(HELM)" lint "$$chart"; \
 				"$(HELM)" template "$$(basename "$$chart")" "$$chart" >/dev/null; \
-			done; \
+			done <"$$charts_file"; \
 		else \
 			echo "helm not found; skipping Helm validation."; \
 		fi; \
 	else \
-		echo "charts/ not found; skipping Helm validation."; \
+		echo "$(HELM_CHART_DIR) not found; skipping Helm validation."; \
 	fi
 
 validate-kubernetes:
