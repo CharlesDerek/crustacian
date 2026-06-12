@@ -1,0 +1,45 @@
+version: 1
+project: crustacian
+standard: Project Omniplexs
+
+commands:
+  build: cargo build
+  test: cargo test
+  release_build: cargo build --release
+  ci_build: cargo build --verbose
+  ci_test: cargo test --verbose
+
+architecture:
+  language: Rust
+  crate_type: binary
+  entrypoint: src/main.rs
+  current_platform: Windows
+  package_manifest: Cargo.toml
+  lockfile: Cargo.lock
+  ci_workflow: .github/workflows/rust.yml
+
+features:
+  - Interactive ClamAV management CLI
+  - ClamAV environment initialization and repair
+  - FreshClam signature updates
+  - clamd Windows service installation and startup checks
+  - Quick, full, and custom scan flows
+  - Report, quarantine, and delete infected-file actions
+  - Progress output with throughput and ETA
+  - Scan history summaries
+
+rules:
+  - Keep changes scoped to the requested behavior.
+  - Preserve the existing Windows-only runtime guard unless cross-platform support is explicitly implemented.
+  - Keep build and test verification based on cargo build and cargo test.
+  - Keep Cargo.lock committed for reproducible binary builds.
+  - Do not silently weaken ClamAV scanning or signature-update behavior.
+  - Treat delete and quarantine scan actions as safety-sensitive flows.
+  - Prefer Rust standard library path and process APIs over ad hoc shell strings.
+  - Update AGENTS.md and this file when architecture, commands, or major workflows change.
+
+verification:
+  required:
+    - cargo build
+    - cargo test
+  note: If Cargo is unavailable, report the exact command failure instead of claiming verification passed.
