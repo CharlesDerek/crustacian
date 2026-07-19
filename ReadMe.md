@@ -1,16 +1,16 @@
 # 🦀 **Project Crustacian**
 
-### **A cross-platform Rust CLI to install, update, and drive ClamAV + FreshClam on Windows, macOS, and Linux.**
+### **An enterprise-ready, cross-platform Rust CLI for automated ClamAV deployment, endpoint telemetry, and blue-team security operations.**
 
 ---
   <p>
-    <img alt="Crustacian Logo" height="150px" style="border-radius:5%;border:1px solid cyan" src="./assets/logo/3cc0de91-65e5-4d18-9dac-88bc3c8920bf.gif" />
+    <img alt="Crustacian Logo" height="300px" style="border-radius:5%;border:1px solid cyan" src="./assets/file_00000000492c81f5a9b02f078e90a64d.png" />
   </p>
 ---
 
 ## 🌐 Overview
 
-**Crustacian** is an open-source, vendor-neutral command-line tool written in **Rust**, designed to simplify deployment and operation of the **ClamAV** antivirus engine across multiple operating systems.
+**Crustacian** is an open-source, vendor-neutral command-line tool written in **Rust**, designed to simplify deployment and operation of the **ClamAV** antivirus engine while growing into a local-first endpoint security and EDR research toolkit.
 
 It provides a consistent, secure, and predictable interface for:
 
@@ -19,8 +19,9 @@ It provides a consistent, secure, and predictable interface for:
 * Running quick, full, or custom scans
 * Viewing detailed results with throughput, progress, and ETA metrics
 * Exporting structured logs for integration into SIEM/SOAR/automation pipelines
+* Generating endpoint telemetry, snapshot hashes, and disabled response plans for EDR R&D
 
-Crustacian is designed for **individuals, developers, sysadmins, SOC teams, and enterprise environments** where cross-platform consistency and automation matter.
+Crustacian is designed for **developers, sysadmins, SOC teams, blue-team operators, and enterprise environments** where endpoint consistency, evidence capture, and controlled automation matter.
 
 ---
 
@@ -34,6 +35,7 @@ Crustacian is designed for **individuals, developers, sysadmins, SOC teams, and 
 | **Interactive Scan CLI**    | Quick / full / folder-targeted scans                                    |
 | **Live Metrics**            | Progress %, files/sec, ETA, infected count, skipped files               |
 | **Structured Logging**      | JSON + human-readable summary logs for automation systems               |
+| **Endpoint R&D Telemetry**  | Local NDJSON event spool, endpoint snapshots, and response plan drafts  |
 | **Config Management**       | Auto-generates safe default ClamAV and FreshClam configs                |
 | **Extensible Architecture** | Designed for future modules (scheduling, remote scanning, local agents) |
 
@@ -87,9 +89,9 @@ You’ll see a menu similar to:
 ```
 ==================== Crustacian CLI ====================
 1. Initialize / repair ClamAV environment
-2. Update signatures (FreshClam)
-3. Run a scan (quick / full / custom)
-4. View previous scan results
+2. Run a scan (quick / full / custom)
+3. View previous scan results
+4. Endpoint EDR R&D preview
 5. Exit
 ```
 
@@ -149,6 +151,7 @@ This modular approach ensures Crustacian can be embedded into:
 * CI/CD environments
 * Custom security tooling
 * Endpoint agent frameworks
+* Local-first EDR research pipelines
 
 ---
 
@@ -156,11 +159,12 @@ This modular approach ensures Crustacian can be embedded into:
 
 Crustacian emphasizes:
 
-* **No external telemetry**
+* **No external telemetry by default**
 * **No network connectivity except FreshClam updates**
 * **No local persistence beyond logs/results**
 * **No proprietary or closed-source components**
 * **No remote execution or network scanning** (by design)
+* **No active account lockout, host isolation, or destructive shutdown in the current EDR R&D implementation**
 
 All operations are **local and transparent**.
 
@@ -176,12 +180,16 @@ Upcoming milestones include:
 * Non-interactive scan commands (`scan --full`, `scan --path`, etc.)
 * Improved OS detection and ClamAV auto-installation helpers
 * Enhanced logging (CSV, NDJSON, syslog integration)
+* SIEM-ready endpoint event schema validation
+* Dry-run SIEM/authentik/LDAP/containment readiness checks
 
 ### **Medium Term**
 
 * Scheduled scan module
 * Plugin-based output formatting
 * Remote-report mode (print-only vs write-to-log modes)
+* Optional SIEM transport with authenticated delivery and retry queue
+* authentik/LDAP response connector in dry-run mode
 
 ### **Long Term**
 
@@ -189,6 +197,7 @@ Upcoming milestones include:
 * Local agent mode for large-scale fleet scenarios
 * Optional sandboxing for file pre-processing before scan
 * Pluggable detection layers (YARA support, heuristic pre-checks)
+* Reversible, approval-gated containment workflows for managed fleets
 
 ---
 

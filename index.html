@@ -2,10 +2,10 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Crustacian — Rust-Based Antivirus CLI for ClamAV</title>
+    <title>Crustacian — Rust Endpoint Security CLI for ClamAV and Blue-Team Operations</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
 
-    <meta name="description" content="Crustacian is an open-source Rust-based CLI that automates ClamAV installation, updates, and scanning across Windows, macOS, and Linux.">
+    <meta name="description" content="Crustacian is an open-source Rust endpoint security CLI for ClamAV lifecycle management, scan telemetry, SIEM-ready evidence, and blue-team R&D workflows.">
 
     <!-- Bootstrap 5 CSS (CDN) -->
     <link
@@ -30,20 +30,21 @@
             background: radial-gradient(circle at top, #102a43 0, #050812 55%);
         }
         .hero-logo {
-            width: 80px;
-            height: 80px;
+            width: 220px;
+            height: 220px;
             border-radius: 1.5rem;
             background: rgba(15, 23, 42, 0.9);
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 2.5rem;
             margin-bottom: 1rem;
+            overflow: hidden;
         }
         .hero-logo__img {
-            max-width: 75px;
-            max-height: 75px;
-            border-radius: 7px;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            border-radius: 1.5rem;
         }
         .hero-title {
             font-size: clamp(2.3rem, 4vw, 3rem);
@@ -118,19 +119,19 @@
         <div class="row align-items-center g-4">
             <div class="col-lg-7">
                 <div class="hero-logo">
-                    <img class="hero-logo__img" src="/assets/logo/3cc0de91-65e5-4d18-9dac-88bc3c8920bf.gif" />
+                    <img class="hero-logo__img" src="./assets/file_00000000492c81f5a9b02f078e90a64d.png" alt="Crustacian logo" />
                 </div>
                 <span class="badge bg-success-subtle text-success-emphasis badge-pill mb-3">
-                    Rust · Open Source · ClamAV Automation
+                    Rust · Open Source · Endpoint Security R&D
                 </span>
                 <h1 class="hero-title mb-3">
-                    Crustacian — a Rust-powered CLI for ClamAV automation
+                    Crustacian — a Rust endpoint CLI for ClamAV and blue-team operations
                 </h1>
                 <p class="hero-subtitle mb-4">
-                    Crustacian is a cross-platform command-line tool written in Rust that
-                    installs, configures, and drives ClamAV + FreshClam across Windows,
-                    macOS, and Linux. Built for developers, sysadmins, and security teams
-                    who want predictable, scriptable antivirus scanning.
+                    Crustacian is shifting from a local antivirus helper into an
+                    endpoint security toolkit: ClamAV lifecycle management, repeatable
+                    scans, local evidence capture, SIEM-ready telemetry, and safe
+                    response-planning stages for security teams.
                 </p>
                 <div class="d-flex flex-wrap gap-2 mb-4">
                     <a href="https://github.com/CharlesDerek/crustacian" target="_blank" rel="noopener"
@@ -142,7 +143,7 @@
                     </a>
                 </div>
                 <p class="text-secondary mb-0">
-                    Self-host it. Automate it. Integrate it into your own security workflows.
+                    Self-host it. Automate it. Build endpoint evidence into your own security workflows.
                 </p>
             </div>
             <div class="col-lg-5">
@@ -152,16 +153,16 @@
                             Quick Overview
                         </h6>
                         <ul class="list-unstyled mb-3 small">
-                            <li>✅ Rust-based, single binary CLI</li>
-                            <li>✅ Installs & configures ClamAV and FreshClam</li>
-                            <li>✅ Quick / full / custom path scans</li>
-                            <li>✅ Live progress, throughput, and ETA</li>
-                            <li>✅ Logs results for later review or automation</li>
+                            <li>✅ Rust-based, single binary endpoint CLI</li>
+                            <li>✅ Installs and configures ClamAV and FreshClam</li>
+                            <li>✅ Quick, full, and custom path scans</li>
+                            <li>✅ Local scan evidence, throughput, and ETA</li>
+                            <li>✅ SIEM-ready telemetry and EDR R&D planning artifacts</li>
                         </ul>
                         <div class="small text-secondary">
-                            Perfect for servers, lab environments, CI checks, and
-                            security research workflows where you want transparent,
-                            scriptable antivirus scans.
+                            Built for lab environments, managed endpoints, SOC
+                            workflows, and security research where transparent local
+                            evidence matters before enforcement is enabled.
                         </div>
                     </div>
                 </div>
@@ -176,19 +177,22 @@
             <div class="col-lg-6">
                 <h2 class="h3 mb-3">What is Crustacian?</h2>
                 <p class="text-secondary">
-                    Crustacian is a CLI tool that wraps ClamAV in a clean, ergonomic,
-                    Rust-based interface. It handles the heavy lifting:
+                    Crustacian is a Rust CLI that wraps ClamAV in a clean operational
+                    interface while laying the groundwork for endpoint detection and
+                    response research. It handles the heavy lifting:
                 </p>
                 <ul class="text-secondary">
                     <li>Detecting or bootstrapping a ClamAV installation</li>
                     <li>Creating tuned configuration files for clamd and FreshClam</li>
                     <li>Running scans and surfacing results clearly</li>
                     <li>Saving summaries and infection lists for later use</li>
+                    <li>Producing local endpoint telemetry and snapshot hashes for SIEM pipelines</li>
                 </ul>
                 <p class="text-secondary mb-0">
                     You stay in control of your environment — Crustacian is
-                    self-hosted, local-first, and built to be integrated into your
-                    existing tools and infrastructure.
+                    self-hosted, local-first, and built to integrate with existing
+                    blue-team tools without enabling destructive response actions by
+                    default.
                 </p>
             </div>
             <div class="col-lg-6">
@@ -203,7 +207,7 @@
                                 <strong>License</strong><br> MIT
                             </div>
                             <div class="col-md-6">
-                                <strong>Platforms</strong><br> Windows, macOS, Linux
+                                <strong>Scope</strong><br> Endpoint security R&D
                             </div>
                             <div class="col-md-6">
                                 <strong>Engine</strong><br> ClamAV + FreshClam
@@ -211,9 +215,10 @@
                         </div>
                         <hr class="my-3 border-secondary-subtle">
                         <p class="small text-secondary mb-0">
-                            Crustacian doesn’t phone home, doesn’t collect data,
-                            and doesn’t lock you into any vendor ecosystem. It’s a
-                            simple, inspectable tool you can fork, extend, or embed.
+                            Crustacian remains local-first by default. SIEM delivery,
+                            identity response, and containment workflows are staged
+                            as explicit, auditable integrations rather than hidden
+                            background behavior.
                         </p>
                     </div>
                 </div>
@@ -241,11 +246,11 @@
             <div class="col-md-4">
                 <div class="card h-100">
                     <div class="card-body">
-                        <h3 class="card-title h5">Run Scans Easily</h3>
+                        <h3 class="card-title h5">Run Endpoint Scans</h3>
                         <p class="card-text small text-secondary">
-                            Run quick, full, or custom directory scans using an
-                            interactive menu or CLI flags. See infections in real time
-                            and export results for follow-up analysis or automation.
+                            Run quick, full, or custom directory scans from the
+                            interactive CLI. See infections in real time and export
+                            results for follow-up analysis or automation.
                         </p>
                     </div>
                 </div>
@@ -253,11 +258,11 @@
             <div class="col-md-4">
                 <div class="card h-100">
                     <div class="card-body">
-                        <h3 class="card-title h5">Scriptable & Automatable</h3>
+                        <h3 class="card-title h5">Telemetry & Response R&D</h3>
                         <p class="card-text small text-secondary">
-                            Designed to be wired into cron jobs, CI/CD pipelines,
-                            or your own security orchestration flows. Keep your
-                            antivirus scans consistent across machines and platforms.
+                            Generate NDJSON events, endpoint snapshots, SHA-256
+                            evidence hashes, and disabled response plans for SIEM,
+                            authentik, LDAP, and containment research.
                         </p>
                     </div>
                 </div>
@@ -270,8 +275,9 @@
     <div class="container">
         <h2 class="h3 mb-3">Basic usage</h2>
         <p class="text-secondary">
-            Once you’ve cloned the repository and built the project with Cargo, you
-            can start Crustacian from a terminal:
+            Once you’ve cloned the repository and built the project with Cargo,
+            launch the interactive CLI to initialize ClamAV, scan endpoints, and
+            generate local telemetry artifacts:
         </p>
         <div class="row g-4">
             <div class="col-lg-6">
@@ -302,10 +308,11 @@ cargo build --release</code></pre>
 #    - Full scan: whole volume
 #    - Custom scan: specify paths
 
-# 3. Review history
+# 3. Review history and endpoint telemetry
 #    - View past scan summaries
 #    - Inspect infection lists
-#    - Use logs in your own workflows</code></pre>
+#    - Generate SIEM-ready local event artifacts
+#    - Draft disabled response plans for review</code></pre>
             </div>
         </div>
     </div>
@@ -315,7 +322,7 @@ cargo build --release</code></pre>
     <div class="container">
         <div class="d-flex flex-column flex-md-row justify-content-between align-items-center gap-2">
             <div class="footer">
-                © <span id="year"></span> Crustacian — Open-source Rust antivirus CLI.
+                © <span id="year"></span> Crustacian — Open-source Rust endpoint security CLI.
             </div>
             <div class="footer">
                 <a href="https://github.com/CharlesDerek/crustacian" target="_blank" rel="noopener" class="link-light">
