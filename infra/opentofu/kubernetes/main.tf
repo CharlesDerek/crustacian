@@ -15,8 +15,8 @@ provider "kubernetes" {
 
 locals {
   app_labels = {
-    app.kubernetes.io/name       = "crustacian"
-    app.kubernetes.io/managed-by = "opentofu"
+    "app.kubernetes.io/name"       = "crustacian"
+    "app.kubernetes.io/managed-by" = "opentofu"
   }
 }
 
