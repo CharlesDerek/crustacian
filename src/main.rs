@@ -1,9 +1,13 @@
 use std::collections::HashMap;
 use std::fs;
-use std::io::{self, BufRead, Read, Write};
+#[cfg(windows)]
+use std::io::Read;
+use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
+
+use sha2::{Digest, Sha256};
 
 #[cfg(windows)]
 const DEFAULT_CLAM_DIR: &str = r"C:\Program Files\ClamAV";
@@ -16,8 +20,9 @@ fn main() {
         println!("1. Initialize / repair ClamAV environment");
         println!("2. Run a new scan");
         println!("3. View previous scans");
-        println!("4. Exit");
-        print!("Select option (1-4): ");
+        println!("4. Endpoint EDR R&D preview");
+        println!("5. Exit");
+        print!("Select option (1-5): ");
         flush_stdout();
 
         let sel = read_line();
@@ -25,7 +30,8 @@ fn main() {
             "1" => init_cmd(),
             "2" => scan_cmd(),
             "3" => history_menu(),
-            "4" => {
+            "4" => endpoint_rd_menu(),
+            "5" => {
                 println!("Goodbye.");
                 break;
             }
@@ -102,7 +108,10 @@ fn init_linux(_clamdir: &str) -> io::Result<()> {
     if !cmd_exists("clamscan") {
         println!("[+] ClamAV not found. Installing via apt...");
         run("sudo", &["apt-get", "update"])?;
-        run("sudo", &["apt-get", "install", "-y", "clamav", "clamav-daemon"])?;
+        run(
+            "sudo",
+            &["apt-get", "install", "-y", "clamav", "clamav-daemon"],
+        )?;
     } else {
         println!("[+] ClamAV is already installed.");
     }
@@ -137,18 +146,49 @@ fn scan_cmd() {
         "1" => {
             #[cfg(windows)]
             {
-                let userprof = std::env::var("USERPROFILE").unwrap_or_else(|_| String::from(r"C:\Users\Public"));
-                scan_targets.push(Path::new(&userprof).join("Documents").to_string_lossy().into_owned());
-                scan_targets.push(Path::new(&userprof).join("Downloads").to_string_lossy().into_owned());
-                scan_targets.push(Path::new(&userprof).join("Desktop").to_string_lossy().into_owned());
+                let userprof = std::env::var("USERPROFILE")
+                    .unwrap_or_else(|_| String::from(r"C:\Users\Public"));
+                scan_targets.push(
+                    Path::new(&userprof)
+                        .join("Documents")
+                        .to_string_lossy()
+                        .into_owned(),
+                );
+                scan_targets.push(
+                    Path::new(&userprof)
+                        .join("Downloads")
+                        .to_string_lossy()
+                        .into_owned(),
+                );
+                scan_targets.push(
+                    Path::new(&userprof)
+                        .join("Desktop")
+                        .to_string_lossy()
+                        .into_owned(),
+                );
                 scan_targets.push(r"C:\Windows\Temp".to_string());
             }
             #[cfg(unix)]
             {
                 let home = std::env::var("HOME").unwrap_or_else(|_| String::from("/home/cladmin"));
-                scan_targets.push(Path::new(&home).join("Documents").to_string_lossy().into_owned());
-                scan_targets.push(Path::new(&home).join("Downloads").to_string_lossy().into_owned());
-                scan_targets.push(Path::new(&home).join("Desktop").to_string_lossy().into_owned());
+                scan_targets.push(
+                    Path::new(&home)
+                        .join("Documents")
+                        .to_string_lossy()
+                        .into_owned(),
+                );
+                scan_targets.push(
+                    Path::new(&home)
+                        .join("Downloads")
+                        .to_string_lossy()
+                        .into_owned(),
+                );
+                scan_targets.push(
+                    Path::new(&home)
+                        .join("Desktop")
+                        .to_string_lossy()
+                        .into_owned(),
+                );
                 scan_targets.push("/tmp".to_string());
             }
         }
@@ -202,7 +242,11 @@ fn scan_cmd() {
         match pre_count_files(&scan_targets) {
             Ok(count) => {
                 total_files = count;
-                println!("Found ~{} files in {:?}.", total_files, start_count.elapsed());
+                println!(
+                    "Found ~{} files in {:?}.",
+                    total_files,
+                    start_count.elapsed()
+                );
             }
             Err(e) => {
                 println!("[!] Pre-count failed, falling back to adaptive ETA: {e}");
@@ -221,7 +265,7 @@ fn scan_cmd() {
         let q_dir = r"C:\Quarantine";
         #[cfg(unix)]
         let q_dir = "/var/lib/crustacian/quarantine";
-        
+
         let _ = fs::create_dir_all(q_dir);
         args.push(format!("--move={}", q_dir));
     } else if mode == "remove" {
@@ -245,7 +289,7 @@ fn scan_cmd() {
     } else {
         Command::new(clamdscan_path)
     };
-    
+
     cmd.args(&args)
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit());
@@ -378,6 +422,9 @@ fn scan_cmd() {
     let summary_file = report_dir.join("summary.txt");
     let _ = fs::write(&infected_list, infected_lines.join("\n"));
     let _ = fs::write(&summary_file, summary_lines.join("\n"));
+    if let Err(e) = write_scan_telemetry(&report_dir, &scan_targets, mode, &infected_lines) {
+        eprintln!("[!] Failed to write endpoint telemetry preview: {e}");
+    }
 
     println!("\nSummary:");
     for s in &summary_lines {
@@ -397,6 +444,44 @@ fn scan_cmd() {
     wait_for_enter();
 }
 
+fn endpoint_rd_menu() {
+    println!("\n=== Endpoint EDR R&D Preview ===");
+    println!("1. Write SIEM telemetry config template");
+    println!("2. Generate local endpoint telemetry snapshot");
+    println!("3. Generate response action plan");
+    println!("4. Run first-stage integration dry run");
+    println!("5. Back");
+    print!("Choice: ");
+    flush_stdout();
+
+    match read_line().as_str() {
+        "1" => match write_endpoint_config_template() {
+            Ok(path) => println!("Wrote template: {}", path.display()),
+            Err(e) => eprintln!("[!] Failed to write template: {e}"),
+        },
+        "2" => match write_endpoint_snapshot("manual_snapshot") {
+            Ok((path, hash)) => {
+                println!("Wrote snapshot: {}", path.display());
+                println!("Snapshot SHA-256: {hash}");
+            }
+            Err(e) => eprintln!("[!] Failed to write snapshot: {e}"),
+        },
+        "3" => match write_response_action_plan("manual_rd_review", true, true, true) {
+            Ok(path) => println!("Wrote disabled response plan: {}", path.display()),
+            Err(e) => eprintln!("[!] Failed to write response plan: {e}"),
+        },
+        "4" => match write_integration_dry_run("manual_integration_check") {
+            Ok(path) => println!("Wrote integration dry-run record: {}", path.display()),
+            Err(e) => eprintln!("[!] Failed to write integration dry-run record: {e}"),
+        },
+        "5" => return,
+        _ => println!("Invalid option."),
+    }
+
+    println!("\nPress Enter to return to main menu...");
+    wait_for_enter();
+}
+
 fn history_menu() {
     let scans = list_scan_dirs();
     if scans.is_empty() {
@@ -406,7 +491,11 @@ fn history_menu() {
     }
 
     for (i, d) in scans.iter().enumerate() {
-        println!("[{}] {}", i + 1, d.file_name().unwrap_or_default().to_string_lossy());
+        println!(
+            "[{}] {}",
+            i + 1,
+            d.file_name().unwrap_or_default().to_string_lossy()
+        );
     }
     print!("Enter # to view or Enter to go back: ");
     flush_stdout();
@@ -421,7 +510,10 @@ fn history_menu() {
     }
 
     let d = &scans[idx - 1];
-    println!("===== {} =====", d.file_name().unwrap_or_default().to_string_lossy());
+    println!(
+        "===== {} =====",
+        d.file_name().unwrap_or_default().to_string_lossy()
+    );
     show_if_exists(&d.join("summary.txt"));
     println!("--- Infected ---");
     show_if_exists(&d.join("infected.txt"));
@@ -466,7 +558,10 @@ fn ensure_db_updated(clamdir: &str) -> io::Result<()> {
     let max_attempts = 3;
     let freshclam_path = Path::new(clamdir).join("freshclam.exe");
     for attempt in 1..=max_attempts {
-        println!("    [Attempt {}/{}] Running freshclam...", attempt, max_attempts);
+        println!(
+            "    [Attempt {}/{}] Running freshclam...",
+            attempt, max_attempts
+        );
         let status = Command::new(&freshclam_path)
             .arg("-v")
             .status()
@@ -498,21 +593,15 @@ fn ensure_db_updated(clamdir: &str) -> io::Result<()> {
     }
 }
 
+#[cfg(windows)]
 fn db_is_present(clamdir: &str) -> bool {
     let mut candidates = vec![
         Path::new(clamdir).join("db"),
         Path::new(clamdir).join("database"),
     ];
 
-    #[cfg(windows)]
-    {
-        candidates.push(PathBuf::from(r"C:\ProgramData\.clamwin\db"));
-        candidates.push(PathBuf::from(r"C:\ProgramData\clamav-db"));
-    }
-    #[cfg(unix)]
-    {
-        candidates.push(PathBuf::from("/var/lib/clamav"));
-    }
+    candidates.push(PathBuf::from(r"C:\ProgramData\.clamwin\db"));
+    candidates.push(PathBuf::from(r"C:\ProgramData\clamav-db"));
 
     for dir in candidates {
         if let Ok(entries) = fs::read_dir(&dir) {
@@ -628,7 +717,6 @@ fn service_is_disabled(name: &str) -> bool {
     }
 }
 
-
 // ========== GENERIC HELPERS (unchanged / lightly tweaked) ==========
 
 fn flush_stdout() {
@@ -646,10 +734,12 @@ fn read_line() -> String {
     buf.trim_end_matches(&['\n', '\r'][..]).to_string()
 }
 
+#[cfg(windows)]
 fn file_exists(path: PathBuf) -> bool {
     fs::metadata(path).map(|m| m.is_file()).unwrap_or(false)
 }
 
+#[cfg(windows)]
 fn make_dirs(clamdir: &str) -> io::Result<()> {
     fs::create_dir_all(clamdir)?;
     let d = base_scans_dir();
@@ -660,7 +750,8 @@ fn make_dirs(clamdir: &str) -> io::Result<()> {
 fn base_scans_dir() -> PathBuf {
     #[cfg(windows)]
     {
-        let user = std::env::var("USERPROFILE").unwrap_or_else(|_| String::from(r"C:\Users\Public"));
+        let user =
+            std::env::var("USERPROFILE").unwrap_or_else(|_| String::from(r"C:\Users\Public"));
         Path::new(&user).join("Documents").join("cyberplexs-scans")
     }
     #[cfg(unix)]
@@ -700,6 +791,7 @@ fn run(name: &str, args: &[&str]) -> io::Result<()> {
     Command::new(name).args(args).status().map(|_| ())
 }
 
+#[cfg(windows)]
 fn run_silent(name: &str, args: &[&str]) -> io::Result<()> {
     Command::new(name)
         .args(args)
@@ -770,7 +862,8 @@ fn try_install_clamav() -> io::Result<()> {
 
 #[cfg(windows)]
 fn write_clam_confs(clamdir: &str) -> io::Result<()> {
-    let clamd_conf = CLAMD_CONF_TEMPLATE.replace("\nExample\n", "\n# Example (disabled)\n# Example\n");
+    let clamd_conf =
+        CLAMD_CONF_TEMPLATE.replace("\nExample\n", "\n# Example (disabled)\n# Example\n");
     let fresh_conf =
         FRESHCLAM_CONF_TEMPLATE.replace("\nExample\n", "\n# Example (disabled)\n# Example\n");
 
@@ -779,19 +872,21 @@ fn write_clam_confs(clamdir: &str) -> io::Result<()> {
     Ok(())
 }
 
+#[cfg(windows)]
 fn wait_for_clam_ready(log_path: &Path, timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
         if let Ok(mut f) = fs::File::open(log_path) {
             let mut buf = Vec::new();
-            if f.read_to_end(&mut buf).is_ok() {
-                if buf.windows("daemon ready".len()).any(|w| w == b"daemon ready")
+            if f.read_to_end(&mut buf).is_ok()
+                && (buf
+                    .windows("daemon ready".len())
+                    .any(|w| w == b"daemon ready")
                     || buf
                         .windows("clamd daemon ready".len())
-                        .any(|w| w == b"clamd daemon ready")
-                {
-                    return true;
-                }
+                        .any(|w| w == b"clamd daemon ready"))
+            {
+                return true;
             }
         }
         std::thread::sleep(Duration::from_secs(2));
@@ -803,7 +898,7 @@ fn wait_for_clam_ready(log_path: &Path, timeout: Duration) -> bool {
 fn pre_count_files(targets: &[String]) -> io::Result<i64> {
     let mut total: i64 = 0;
     let mut skip: HashMap<String, bool> = HashMap::new();
-    
+
     #[cfg(windows)]
     for s in &[
         r"c:\windows\winsxs",
@@ -894,8 +989,480 @@ fn chrono_stamp() -> String {
     now.format("%Y%m%d_%H%M%S").to_string()
 }
 
+fn endpoint_state_dir() -> PathBuf {
+    let dir = base_scans_dir().join("endpoint-rd");
+    let _ = fs::create_dir_all(&dir);
+    dir
+}
+
+fn endpoint_id() -> String {
+    if let Ok(value) = std::env::var("CRUSTACIAN_ENDPOINT_ID") {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+
+    let host = hostname();
+    let seed = format!("crustacian:{host}:{}", std::env::consts::OS);
+    format!("crustacian-{}", short_sha256(&seed, 12))
+}
+
+fn hostname() -> String {
+    std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_else(|_| String::from("unknown-host"))
+}
+
+fn write_scan_telemetry(
+    report_dir: &Path,
+    scan_targets: &[String],
+    mode: &str,
+    infected_lines: &[String],
+) -> io::Result<()> {
+    let severity = if infected_lines.is_empty() {
+        "informational"
+    } else {
+        "high"
+    };
+    let classifier = if infected_lines.is_empty() {
+        "clamav.scan.clean"
+    } else {
+        "clamav.scan.infected"
+    };
+    let confidence = if infected_lines.is_empty() {
+        0.72
+    } else {
+        0.94
+    };
+    let (snapshot_path, snapshot_hash) = write_endpoint_snapshot("scan_complete")?;
+    let payload = endpoint_event_json(EndpointEvent {
+        event_kind: "scan_complete",
+        severity,
+        classifier,
+        confidence,
+        actor: "local_cli",
+        auth_provider: "none",
+        evidence: &format!(
+            "mode={mode}; targets={}; infected_count={}; report_dir={}; snapshot={}",
+            scan_targets.join("|"),
+            infected_lines.len(),
+            report_dir.display(),
+            snapshot_path.display()
+        ),
+        lockout_recommended: !infected_lines.is_empty(),
+        isolation_recommended: !infected_lines.is_empty(),
+        snapshot_hash: &snapshot_hash,
+    });
+    append_siem_spool(&payload)?;
+    fs::write(
+        report_dir.join("endpoint_event.ndjson"),
+        format!("{payload}\n"),
+    )?;
+
+    if !infected_lines.is_empty() {
+        let _ = write_response_action_plan("clamav_infection", true, true, true);
+    }
+
+    Ok(())
+}
+
+fn write_endpoint_config_template() -> io::Result<PathBuf> {
+    let path = endpoint_state_dir().join("endpoint-rd-config.toml");
+    fs::write(&path, ENDPOINT_RD_CONFIG_TEMPLATE)?;
+    Ok(path)
+}
+
+fn write_endpoint_snapshot(reason: &str) -> io::Result<(PathBuf, String)> {
+    let stamp = chrono_stamp();
+    let path = endpoint_state_dir().join(format!("snapshot-{stamp}.json"));
+    let content = endpoint_snapshot_json(reason);
+    fs::write(&path, &content)?;
+    Ok((path, sha256_hex(content.as_bytes())))
+}
+
+fn write_response_action_plan(
+    reason: &str,
+    lockout_recommended: bool,
+    isolation_recommended: bool,
+    recovery_required: bool,
+) -> io::Result<PathBuf> {
+    let stamp = chrono_stamp();
+    let path = endpoint_state_dir().join(format!("response-plan-{stamp}.json"));
+    let content = format!(
+        concat!(
+            "{{\n",
+            "  \"schema_version\": \"crustacian.response.v0\",\n",
+            "  \"created_at\": \"{}\",\n",
+            "  \"endpoint_id\": \"{}\",\n",
+            "  \"reason\": \"{}\",\n",
+            "  \"status\": \"planned_disabled\",\n",
+            "  \"authentik_ldap\": {{\n",
+            "    \"enabled\": false,\n",
+            "    \"intended_action\": \"disable_or_lock_account_after_approval\",\n",
+            "    \"required_controls\": [\"mTLS\", \"least_privilege_bind\", \"change_ticket\", \"break_glass_exclusion\"]\n",
+            "  }},\n",
+            "  \"network_containment\": {{\n",
+            "    \"enabled\": false,\n",
+            "    \"recommended\": {},\n",
+            "    \"intended_action\": \"isolate_to_siem_and_recovery_network_only\"\n",
+            "  }},\n",
+            "  \"asset_lockdown\": {{\n",
+            "    \"enabled\": false,\n",
+            "    \"recommended\": {},\n",
+            "    \"recovery_required\": {},\n",
+            "    \"destructive_shutdown\": false\n",
+            "  }},\n",
+            "  \"operator_message\": \"Containment actions are R&D placeholders and require security-team approval before implementation.\"\n",
+            "}}\n"
+        ),
+        json_escape(&chrono::Utc::now().to_rfc3339()),
+        json_escape(&endpoint_id()),
+        json_escape(reason),
+        isolation_recommended,
+        lockout_recommended,
+        recovery_required
+    );
+    fs::write(&path, content)?;
+    Ok(path)
+}
+
+fn write_integration_dry_run(reason: &str) -> io::Result<PathBuf> {
+    let (snapshot_path, snapshot_hash) = write_endpoint_snapshot(reason)?;
+    let payload = endpoint_event_json(EndpointEvent {
+        event_kind: "integration_dry_run",
+        severity: "informational",
+        classifier: "endpoint.integration.plan",
+        confidence: 0.61,
+        actor: "local_cli",
+        auth_provider: auth_provider_hint(),
+        evidence: &format!(
+            "siem_configured={}; authentik_configured={}; ldap_configured={}; snapshot={}",
+            env_is_set("CRUSTACIAN_SIEM_URL"),
+            env_is_set("CRUSTACIAN_AUTHENTIK_URL"),
+            env_is_set("CRUSTACIAN_LDAP_URL"),
+            snapshot_path.display()
+        ),
+        lockout_recommended: false,
+        isolation_recommended: false,
+        snapshot_hash: &snapshot_hash,
+    });
+    append_siem_spool(&payload)?;
+
+    let stamp = chrono_stamp();
+    let path = endpoint_state_dir().join(format!("integration-dry-run-{stamp}.json"));
+    let content = format!(
+        concat!(
+            "{{\n",
+            "  \"schema_version\": \"crustacian.integration_attempt.v0\",\n",
+            "  \"created_at\": \"{}\",\n",
+            "  \"endpoint_id\": \"{}\",\n",
+            "  \"reason\": \"{}\",\n",
+            "  \"mode\": \"dry_run\",\n",
+            "  \"siem\": {{\n",
+            "    \"configured\": {},\n",
+            "    \"url_env\": \"CRUSTACIAN_SIEM_URL\",\n",
+            "    \"transport_attempted\": false,\n",
+            "    \"next_stage\": \"implement authenticated HTTPS/syslog sender with queue limits\"\n",
+            "  }},\n",
+            "  \"authentik\": {{\n",
+            "    \"configured\": {},\n",
+            "    \"url_env\": \"CRUSTACIAN_AUTHENTIK_URL\",\n",
+            "    \"mutation_attempted\": false,\n",
+            "    \"next_stage\": \"implement dry-run API client with ticket and allowlist validation\"\n",
+            "  }},\n",
+            "  \"ldap\": {{\n",
+            "    \"configured\": {},\n",
+            "    \"url_env\": \"CRUSTACIAN_LDAP_URL\",\n",
+            "    \"mutation_attempted\": false,\n",
+            "    \"next_stage\": \"implement LDAPS bind test and planned account-state diff only\"\n",
+            "  }},\n",
+            "  \"containment\": {{\n",
+            "    \"configured\": {},\n",
+            "    \"approval_env\": \"CRUSTACIAN_RESPONSE_APPROVAL_TOKEN\",\n",
+            "    \"network_change_attempted\": false,\n",
+            "    \"destructive_shutdown_attempted\": false,\n",
+            "    \"next_stage\": \"define reversible isolation policy and recovery test harness\"\n",
+            "  }},\n",
+            "  \"forensic_snapshot\": {{\n",
+            "    \"path\": \"{}\",\n",
+            "    \"sha256\": \"{}\",\n",
+            "    \"hash_ready_for_siem\": true\n",
+            "  }},\n",
+            "  \"telemetry_event_written\": true\n",
+            "}}\n"
+        ),
+        json_escape(&chrono::Utc::now().to_rfc3339()),
+        json_escape(&endpoint_id()),
+        json_escape(reason),
+        env_is_set("CRUSTACIAN_SIEM_URL"),
+        env_is_set("CRUSTACIAN_AUTHENTIK_URL"),
+        env_is_set("CRUSTACIAN_LDAP_URL"),
+        env_is_set("CRUSTACIAN_RESPONSE_APPROVAL_TOKEN"),
+        json_escape(&snapshot_path.display().to_string()),
+        json_escape(&snapshot_hash)
+    );
+    fs::write(&path, content)?;
+    Ok(path)
+}
+
+fn append_siem_spool(payload: &str) -> io::Result<()> {
+    let path = endpoint_state_dir().join("siem-spool.ndjson");
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    writeln!(file, "{payload}")?;
+    Ok(())
+}
+
+fn env_is_set(name: &str) -> bool {
+    std::env::var(name)
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+}
+
+fn auth_provider_hint() -> &'static str {
+    if env_is_set("CRUSTACIAN_AUTHENTIK_URL") {
+        "authentik"
+    } else if env_is_set("CRUSTACIAN_LDAP_URL") {
+        "ldap"
+    } else {
+        "none"
+    }
+}
+
+struct EndpointEvent<'a> {
+    event_kind: &'a str,
+    severity: &'a str,
+    classifier: &'a str,
+    confidence: f64,
+    actor: &'a str,
+    auth_provider: &'a str,
+    evidence: &'a str,
+    lockout_recommended: bool,
+    isolation_recommended: bool,
+    snapshot_hash: &'a str,
+}
+
+fn endpoint_event_json(event: EndpointEvent<'_>) -> String {
+    let timestamp = chrono::Utc::now().to_rfc3339();
+    let event_id = short_sha256(
+        &format!(
+            "{}:{}:{}:{}",
+            endpoint_id(),
+            timestamp,
+            event.event_kind,
+            event.evidence
+        ),
+        16,
+    );
+
+    format!(
+        concat!(
+            "{{",
+            "\"schema_version\":\"crustacian.endpoint.telemetry.v0\",",
+            "\"event_id\":\"{}\",",
+            "\"timestamp\":\"{}\",",
+            "\"endpoint_id\":\"{}\",",
+            "\"asset_hostname\":\"{}\",",
+            "\"platform\":\"{}\",",
+            "\"event_kind\":\"{}\",",
+            "\"severity\":\"{}\",",
+            "\"classifier\":\"{}\",",
+            "\"confidence\":{:.2},",
+            "\"actor\":\"{}\",",
+            "\"auth_provider\":\"{}\",",
+            "\"lockout_recommended\":{},",
+            "\"isolation_recommended\":{},",
+            "\"forensic_snapshot_sha256\":\"{}\",",
+            "\"evidence\":\"{}\"",
+            "}}"
+        ),
+        event_id,
+        json_escape(&timestamp),
+        json_escape(&endpoint_id()),
+        json_escape(&hostname()),
+        json_escape(std::env::consts::OS),
+        json_escape(event.event_kind),
+        json_escape(event.severity),
+        json_escape(event.classifier),
+        event.confidence,
+        json_escape(event.actor),
+        json_escape(event.auth_provider),
+        event.lockout_recommended,
+        event.isolation_recommended,
+        json_escape(event.snapshot_hash),
+        json_escape(event.evidence)
+    )
+}
+
+fn endpoint_snapshot_json(reason: &str) -> String {
+    let scans = list_scan_dirs();
+    let latest_scan = scans
+        .last()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| String::from("none"));
+
+    format!(
+        concat!(
+            "{{\n",
+            "  \"schema_version\": \"crustacian.endpoint.snapshot.v0\",\n",
+            "  \"created_at\": \"{}\",\n",
+            "  \"reason\": \"{}\",\n",
+            "  \"endpoint_id\": \"{}\",\n",
+            "  \"asset_hostname\": \"{}\",\n",
+            "  \"platform\": \"{}\",\n",
+            "  \"architecture\": \"{}\",\n",
+            "  \"scan_history_dir\": \"{}\",\n",
+            "  \"latest_scan_dir\": \"{}\",\n",
+            "  \"collection_scope\": \"local_metadata_only\",\n",
+            "  \"network_collection\": \"planned_not_collected\",\n",
+            "  \"forensic_collection\": \"planned_manifest_only\"\n",
+            "}}\n"
+        ),
+        json_escape(&chrono::Utc::now().to_rfc3339()),
+        json_escape(reason),
+        json_escape(&endpoint_id()),
+        json_escape(&hostname()),
+        json_escape(std::env::consts::OS),
+        json_escape(std::env::consts::ARCH),
+        json_escape(&base_scans_dir().display().to_string()),
+        json_escape(&latest_scan),
+    )
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    digest.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn short_sha256(value: &str, len: usize) -> String {
+    sha256_hex(value.as_bytes()).chars().take(len).collect()
+}
+
+fn json_escape(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '"' => escaped.push_str("\\\""),
+            '\\' => escaped.push_str("\\\\"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            c if c.is_control() => escaped.push_str(&format!("\\u{:04x}", c as u32)),
+            c => escaped.push(c),
+        }
+    }
+    escaped
+}
+
+const ENDPOINT_RD_CONFIG_TEMPLATE: &str = r#"# Crustacian Endpoint R&D configuration template.
+# No network delivery, account lockout, host isolation, or shutdown action is
+# enabled by this template. Treat all response blocks as design-stage controls.
+
+[identity]
+# Override this per asset through CRUSTACIAN_ENDPOINT_ID or fleet enrollment.
+endpoint_id_source = "CRUSTACIAN_ENDPOINT_ID"
+schema_version = "crustacian.endpoint.telemetry.v0"
+
+[telemetry]
+format = "ndjson"
+local_spool = "Documents/cyberplexs-scans/endpoint-rd/siem-spool.ndjson"
+required_fields = [
+  "schema_version",
+  "event_id",
+  "timestamp",
+  "endpoint_id",
+  "asset_hostname",
+  "platform",
+  "event_kind",
+  "severity",
+  "classifier",
+  "confidence",
+  "actor",
+  "auth_provider",
+  "lockout_recommended",
+  "isolation_recommended",
+  "forensic_snapshot_sha256",
+  "evidence",
+]
+
+[siem]
+enabled = false
+transport = "https"
+endpoint_url = "https://siem.example.invalid/ingest/crustacian"
+endpoint_url_env = "CRUSTACIAN_SIEM_URL"
+auth_mode = "bearer_token"
+auth_token_env = "CRUSTACIAN_SIEM_TOKEN"
+timeout_seconds = 10
+retry_backoff_seconds = [5, 30, 120]
+
+[authentik_ldap]
+enabled = false
+authentik_url_env = "CRUSTACIAN_AUTHENTIK_URL"
+ldap_url_env = "CRUSTACIAN_LDAP_URL"
+server_url = "ldaps://ldap.example.invalid"
+bind_identity = "crustacian-edr-response"
+action_mode = "plan_only"
+allowed_actions = ["recommend_lockout", "write_response_plan"]
+
+[containment]
+enabled = false
+action_mode = "plan_only"
+approval_token_env = "CRUSTACIAN_RESPONSE_APPROVAL_TOKEN"
+allowed_actions = ["recommend_network_isolation", "write_local_recovery_plan"]
+destructive_shutdown_enabled = false
+"#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn json_escape_handles_control_characters() {
+        assert_eq!(json_escape("a\"b\\c\n"), "a\\\"b\\\\c\\n");
+    }
+
+    #[test]
+    fn telemetry_event_contains_required_schema_fields() {
+        let event = endpoint_event_json(EndpointEvent {
+            event_kind: "unit_test",
+            severity: "informational",
+            classifier: "test.classifier",
+            confidence: 0.5,
+            actor: "test",
+            auth_provider: "none",
+            evidence: "sample",
+            lockout_recommended: false,
+            isolation_recommended: false,
+            snapshot_hash: "abc123",
+        });
+
+        assert!(event.contains("\"schema_version\":\"crustacian.endpoint.telemetry.v0\""));
+        assert!(event.contains("\"endpoint_id\":\""));
+        assert!(event.contains("\"forensic_snapshot_sha256\":\"abc123\""));
+    }
+
+    #[test]
+    fn sha256_hex_is_stable() {
+        assert_eq!(
+            sha256_hex(b"crustacian"),
+            "6318dff62e076651a94d98215372148ed0fc9dbbf95db9956ace5bc077e852f9"
+        );
+    }
+
+    #[test]
+    fn auth_provider_defaults_to_none_without_env() {
+        std::env::remove_var("CRUSTACIAN_AUTHENTIK_URL");
+        std::env::remove_var("CRUSTACIAN_LDAP_URL");
+        assert_eq!(auth_provider_hint(), "none");
+    }
+}
+
 // --- Config templates ---
 
+#[cfg(windows)]
 const CLAMD_CONF_TEMPLATE: &str = r#"# Crustacian tuned clamd.conf (Windows)
 LogFile "C:\\Program Files\\ClamAV\\clamd.log"
 LogTime yes
@@ -964,6 +1531,7 @@ DisableCache no
 CacheSize 65536
 "#;
 
+#[cfg(windows)]
 const FRESHCLAM_CONF_TEMPLATE: &str = r#"# Crustacian tuned freshclam.conf (Windows)
 UpdateLogFile "C:\\Program Files\\ClamAV\\freshclam.log"
 LogTime yes

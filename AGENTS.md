@@ -12,7 +12,7 @@ The README describes a broader cross-platform roadmap, but the checked-in code c
 
 ## Architecture
 
-- `Cargo.toml`: Rust package manifest for the `crustacean` binary crate.
+- `Cargo.toml`: Rust package manifest for the `crustacian` binary crate.
 - `Cargo.lock`: Locked dependency graph. Keep this committed for reproducible binary builds.
 - `src/main.rs`: Main application entrypoint and all current runtime logic.
 - `.github/workflows/rust.yml`: CI workflow that runs `cargo build --verbose` and `cargo test --verbose`.
