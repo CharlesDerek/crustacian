@@ -13,6 +13,14 @@ kubectl_dry_run_output="$tmp_dir/kubectl-dry-run.out"
 kubectl_failure_output="$tmp_dir/kubectl-failure.out"
 kubectl_kubeconfig_output="$tmp_dir/kubectl-kubeconfig.out"
 kubectl_log="$tmp_dir/kubectl.log"
+workflow_output="$tmp_dir/workflow.out"
+workflow_actionlint_output="$tmp_dir/workflow-actionlint.out"
+workflow_failure_output="$tmp_dir/workflow-failure.out"
+actionlint_log="$tmp_dir/actionlint.log"
+tofu_skip_output="$tmp_dir/tofu-skip.out"
+tofu_output="$tmp_dir/tofu.out"
+tofu_failure_output="$tmp_dir/tofu-failure.out"
+tofu_log="$tmp_dir/tofu.log"
 shell_failure_output="$tmp_dir/shell-failure.out"
 markdown_skip_output="$tmp_dir/markdown-skip.out"
 markdown_default_output="$tmp_dir/markdown-default.out"
@@ -41,6 +49,9 @@ if ! (
 		HELM= \
 		KUBECTL= \
 		MARKDOWNLINT= \
+		ACTIONLINT= \
+		TOFU= \
+		TERRAFORM= \
 		KUBERNETES_MANIFEST_DIRS="$tmp_dir/missing-manifests" \
 		>"$output_file" 2>&1
 ); then
@@ -78,6 +89,18 @@ if ! grep -q "markdownlint not found; skipping documentation validation." "$outp
 	exit 1
 fi
 
+if ! grep -q "actionlint not found; completed basic GitHub Actions workflow validation." "$output_file"; then
+	cat "$output_file" >&2
+	echo "Expected validation_runner to include GitHub Actions workflow validation." >&2
+	exit 1
+fi
+
+if ! grep -q "OpenTofu/Terraform CLI not found; skipping OpenTofu validation." "$output_file"; then
+	cat "$output_file" >&2
+	echo "Expected validation_runner to include OpenTofu validation with a safe skip when the CLI is unavailable." >&2
+	exit 1
+fi
+
 if ! grep -q "No Ansible playbook directory found; skipping Ansible validation." "$output_file"; then
 	cat "$output_file" >&2
 	echo "Expected validation_runner to include Ansible playbook validation." >&2
@@ -97,6 +120,9 @@ if ! (
 		HELM= \
 		KUBECTL= \
 		MARKDOWNLINT= \
+		ACTIONLINT= \
+		TOFU= \
+		TERRAFORM= \
 		KUBERNETES_MANIFEST_DIRS="$tmp_dir/missing-manifests" \
 		>"$target_output_file" 2>&1
 ); then
@@ -122,6 +148,18 @@ if ! grep -q "markdownlint not found; skipping documentation validation." "$targ
 	exit 1
 fi
 
+if ! grep -q "actionlint not found; completed basic GitHub Actions workflow validation." "$target_output_file"; then
+	cat "$target_output_file" >&2
+	echo "Expected validate-non-mutating to include GitHub Actions workflow validation." >&2
+	exit 1
+fi
+
+if ! grep -q "OpenTofu/Terraform CLI not found; skipping OpenTofu validation." "$target_output_file"; then
+	cat "$target_output_file" >&2
+	echo "Expected validate-non-mutating to include OpenTofu validation with a safe skip when the CLI is unavailable." >&2
+	exit 1
+fi
+
 if ! grep -q "Non-mutating validation completed." "$target_output_file"; then
 	cat "$target_output_file" >&2
 	echo "Expected validate-non-mutating to complete successfully." >&2
@@ -135,6 +173,9 @@ if ! (
 		HELM= \
 		KUBECTL= \
 		MARKDOWNLINT= \
+		ACTIONLINT= \
+		TOFU= \
+		TERRAFORM= \
 		KUBERNETES_MANIFEST_DIRS="$tmp_dir/missing-manifests" \
 		>"$dry_run_output_file" 2>&1
 ); then
@@ -160,6 +201,18 @@ if ! grep -q "markdownlint not found; skipping documentation validation." "$dry_
 	exit 1
 fi
 
+if ! grep -q "actionlint not found; completed basic GitHub Actions workflow validation." "$dry_run_output_file"; then
+	cat "$dry_run_output_file" >&2
+	echo "Expected validate-dry-run to include GitHub Actions workflow validation." >&2
+	exit 1
+fi
+
+if ! grep -q "OpenTofu/Terraform CLI not found; skipping OpenTofu validation." "$dry_run_output_file"; then
+	cat "$dry_run_output_file" >&2
+	echo "Expected validate-dry-run to include OpenTofu validation with a safe skip when the CLI is unavailable." >&2
+	exit 1
+fi
+
 if ! grep -q "Non-mutating validation completed." "$dry_run_output_file"; then
 	cat "$dry_run_output_file" >&2
 	echo "Expected validate-dry-run to complete successfully." >&2
@@ -173,6 +226,9 @@ if ! (
 		HELM= \
 		KUBECTL= \
 		MARKDOWNLINT= \
+		ACTIONLINT= \
+		TOFU= \
+		TERRAFORM= \
 		KUBERNETES_MANIFEST_DIRS="$tmp_dir/missing-manifests" \
 		>"$script_output_file" 2>&1
 ); then
@@ -225,6 +281,18 @@ if ! grep -q "Markdown linting" "$script_help_output_file"; then
 	exit 1
 fi
 
+if ! grep -q "GitHub Actions workflow" "$script_help_output_file"; then
+	cat "$script_help_output_file" >&2
+	echo "Expected scripts/validate-non-mutating.sh --help to describe GitHub Actions workflow validation." >&2
+	exit 1
+fi
+
+if ! grep -q "OpenTofu/Terraform" "$script_help_output_file"; then
+	cat "$script_help_output_file" >&2
+	echo "Expected scripts/validate-non-mutating.sh --help to describe OpenTofu validation." >&2
+	exit 1
+fi
+
 fake_git="$tmp_dir/git"
 cat >"$fake_git" <<'SHELL'
 #!/bin/sh
@@ -259,6 +327,193 @@ if ! grep -q "diff --check" "$git_log"; then
 	cat "$git_diff_output" >&2
 	cat "$git_log" >&2
 	echo "Expected validate-files to run git diff --check." >&2
+	exit 1
+fi
+
+workflow_dir="$tmp_dir/workflows"
+mkdir "$workflow_dir"
+cat >"$workflow_dir/ci.yml" <<'WORKFLOW'
+name: Example validation
+on:
+  push:
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo ok
+WORKFLOW
+
+if ! (
+	cd "$repo_root"
+	"${MAKE:-make}" --no-print-directory validate-github-actions \
+		ACTIONLINT= \
+		GITHUB_WORKFLOW_DIRS="$workflow_dir" \
+		>"$workflow_output" 2>&1
+); then
+	cat "$workflow_output" >&2
+	exit 1
+fi
+
+if ! grep -q "Checking GitHub Actions workflow structure: $workflow_dir/ci.yml" "$workflow_output"; then
+	cat "$workflow_output" >&2
+	echo "Expected validate-github-actions to inspect workflow files." >&2
+	exit 1
+fi
+
+if ! grep -q "actionlint not found; completed basic GitHub Actions workflow validation." "$workflow_output"; then
+	cat "$workflow_output" >&2
+	echo "Expected validate-github-actions to complete basic validation without actionlint." >&2
+	exit 1
+fi
+
+fake_actionlint="$tmp_dir/actionlint"
+cat >"$fake_actionlint" <<'SHELL'
+#!/bin/sh
+set -eu
+printf '%s\n' "$*" >>"$ACTIONLINT_LOG"
+SHELL
+chmod +x "$fake_actionlint"
+
+if ! (
+	cd "$repo_root"
+	ACTIONLINT_LOG="$actionlint_log" \
+		"${MAKE:-make}" --no-print-directory validate-github-actions \
+		ACTIONLINT="$fake_actionlint" \
+		GITHUB_WORKFLOW_DIRS="$workflow_dir" \
+		>"$workflow_actionlint_output" 2>&1
+); then
+	cat "$workflow_actionlint_output" >&2
+	exit 1
+fi
+
+if ! grep -q -- "$workflow_dir/ci.yml" "$actionlint_log"; then
+	cat "$workflow_actionlint_output" >&2
+	cat "$actionlint_log" >&2
+	echo "Expected validate-github-actions to pass workflow files to actionlint." >&2
+	exit 1
+fi
+
+bad_workflow_dir="$tmp_dir/bad-workflows"
+mkdir "$bad_workflow_dir"
+cat >"$bad_workflow_dir/missing-jobs.yml" <<'WORKFLOW'
+name: Missing jobs
+on:
+  pull_request:
+WORKFLOW
+
+if (
+	cd "$repo_root"
+	"${MAKE:-make}" --no-print-directory validate-github-actions \
+		ACTIONLINT= \
+		GITHUB_WORKFLOW_DIRS="$bad_workflow_dir" \
+		>"$workflow_failure_output" 2>&1
+); then
+	cat "$workflow_failure_output" >&2
+	echo "Expected validate-github-actions to fail when a workflow is missing jobs." >&2
+	exit 1
+fi
+
+if ! grep -q "missing top-level 'jobs:' key" "$workflow_failure_output"; then
+	cat "$workflow_failure_output" >&2
+	echo "Expected validate-github-actions to explain the missing jobs key." >&2
+	exit 1
+fi
+
+tf_dir="$tmp_dir/opentofu/kubernetes"
+mkdir -p "$tf_dir"
+cat >"$tf_dir/main.tf" <<'TERRAFORM'
+terraform {
+  required_version = ">= 1.6.0"
+}
+
+output "example" {
+  value = "ok"
+}
+TERRAFORM
+
+if ! (
+	cd "$repo_root"
+	"${MAKE:-make}" --no-print-directory validate-opentofu \
+		TOFU= \
+		TERRAFORM= \
+		OPENTOFU_DIRS="$tmp_dir/opentofu" \
+		>"$tofu_skip_output" 2>&1
+); then
+	cat "$tofu_skip_output" >&2
+	exit 1
+fi
+
+if ! grep -q "OpenTofu/Terraform CLI not found; skipping OpenTofu validation." "$tofu_skip_output"; then
+	cat "$tofu_skip_output" >&2
+	echo "Expected validate-opentofu to skip safely when no CLI is available." >&2
+	exit 1
+fi
+
+fake_tofu="$tmp_dir/tofu"
+cat >"$fake_tofu" <<'SHELL'
+#!/bin/sh
+set -eu
+printf '%s\n' "$*" >>"$TOFU_LOG"
+SHELL
+chmod +x "$fake_tofu"
+
+if ! (
+	cd "$repo_root"
+	TOFU_LOG="$tofu_log" \
+		"${MAKE:-make}" --no-print-directory validate-opentofu \
+		TOFU="$fake_tofu" \
+		TERRAFORM= \
+		OPENTOFU_DIRS="$tmp_dir/opentofu" \
+		>"$tofu_output" 2>&1
+); then
+	cat "$tofu_output" >&2
+	exit 1
+fi
+
+if ! grep -q -- "-chdir=$tf_dir fmt -check -recursive" "$tofu_log"; then
+	cat "$tofu_output" >&2
+	cat "$tofu_log" >&2
+	echo "Expected validate-opentofu to run fmt checks." >&2
+	exit 1
+fi
+
+if ! grep -q -- "init -backend=false -input=false" "$tofu_log"; then
+	cat "$tofu_output" >&2
+	cat "$tofu_log" >&2
+	echo "Expected validate-opentofu to run backend-free init." >&2
+	exit 1
+fi
+
+if ! grep -q -- "validate" "$tofu_log"; then
+	cat "$tofu_output" >&2
+	cat "$tofu_log" >&2
+	echo "Expected validate-opentofu to run validate." >&2
+	exit 1
+fi
+
+cat >"$fake_tofu" <<'SHELL'
+#!/bin/sh
+set -eu
+printf '%s\n' "$*" >>"$TOFU_LOG"
+case "$*" in
+	*validate)
+		exit 1
+		;;
+esac
+SHELL
+chmod +x "$fake_tofu"
+
+if (
+	cd "$repo_root"
+	TOFU_LOG="$tofu_log" \
+		"${MAKE:-make}" --no-print-directory validate-opentofu \
+		TOFU="$fake_tofu" \
+		TERRAFORM= \
+		OPENTOFU_DIRS="$tmp_dir/opentofu" \
+		>"$tofu_failure_output" 2>&1
+); then
+	cat "$tofu_failure_output" >&2
+	echo "Expected validate-opentofu to fail when tofu validate fails." >&2
 	exit 1
 fi
 
