@@ -1,10 +1,10 @@
 # 🦀 **Project Crustacian**
 
-### **A cross-platform Rust CLI to install, update, and drive ClamAV + FreshClam on Windows, macOS, and Linux.**
+### **An enterprise-ready, cross-platform Rust CLI for automated ClamAV deployment, lifecycle management, and blue-team security operations.**
 
 ---
   <p>
-    <img alt="Crustacian Logo" height="150px" style="border-radius:5%;border:1px solid cyan" src="./assets/logo/3cc0de91-65e5-4d18-9dac-88bc3c8920bf.gif" />
+    <img alt="Crustacian Logo" height="300px" style="border-radius:5%;border:1px solid cyan" src="./assets/file_00000000492c81f5a9b02f078e90a64d.png" />
   </p>
 ---
 
