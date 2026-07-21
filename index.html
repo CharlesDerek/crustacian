@@ -78,6 +78,30 @@
         code {
             color: #e0f2fe;
         }
+        .terminal {
+            background-color: #020617;
+            border: 1px solid rgba(148, 163, 184, 0.28);
+            border-radius: 0.5rem;
+            overflow: hidden;
+        }
+        .terminal-bar {
+            background-color: #111827;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+            color: #9ca3af;
+            font-size: 0.8rem;
+            padding: 0.65rem 1rem;
+        }
+        .terminal-body {
+            color: #d1fae5;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+            font-size: 0.88rem;
+            min-height: 260px;
+            padding: 1rem;
+            white-space: pre-wrap;
+        }
+        .terminal-prompt {
+            color: #93c5fd;
+        }
         .footer {
             font-size: 0.9rem;
             color: #9ca3af;
@@ -105,6 +129,7 @@
                 <li class="nav-item"><a class="nav-link" href="#features">Features</a></li>
                 <li class="nav-item"><a class="nav-link" href="#integrations">Integrations</a></li>
                 <li class="nav-item"><a class="nav-link" href="#platform">Server Side</a></li>
+                <li class="nav-item"><a class="nav-link" href="#wasm-cli">WASM CLI</a></li>
                 <li class="nav-item"><a class="nav-link" href="#usage">Usage</a></li>
                 <li class="nav-item">
                     <a class="btn btn-outline-light btn-sm ms-lg-3" href="https://github.com/CharlesDerek/crustacian" target="_blank" rel="noopener">
@@ -449,6 +474,58 @@
     </div>
 </section>
 
+<section id="wasm-cli" class="section bg-dark">
+    <div class="container">
+        <div class="row g-4 align-items-start">
+            <div class="col-lg-5">
+                <h2 class="h3 mb-3">WASM CLI preview</h2>
+                <p class="text-secondary">
+                    The browser build is intended as a safe, inspection-only CLI for
+                    demos, parser validation, and SOC workflow reviews. It can show
+                    the endpoint telemetry shape and ingest batch format without
+                    touching ClamAV services, the local filesystem, identity systems,
+                    or containment controls.
+                </p>
+                <p class="text-secondary">
+                    The sample run below mirrors the Rust endpoint event model and
+                    shows what a sandboxed WebAssembly build would emit before an
+                    endpoint sends data to the server-side ingest API.
+                </p>
+                <button id="runWasmCli" type="button" class="btn btn-primary">
+                    Run Sample
+                </button>
+            </div>
+            <div class="col-lg-7">
+                <div class="terminal" aria-live="polite">
+                    <div class="terminal-bar">
+                        crustacian-wasm · browser telemetry sample
+                    </div>
+                    <div id="wasmCliOutput" class="terminal-body"><span class="terminal-prompt">$</span> crustacian-wasm telemetry sample --mode browser --emit-ingest-batch
+Initializing WASM runtime...
+Runtime: browser sandbox
+Endpoint ID: demo-browser-endpoint
+ClamAV engine: unavailable in browser; using simulated scan metadata
+
+Generated endpoint event:
+  schema_version: crustacian.endpoint.telemetry.v0
+  event_kind: scan.completed
+  classifier: clamav.scan.clean
+  severity: informational
+  confidence: 0.72
+  isolation_recommended: false
+
+Generated ingest batch:
+  schema_version: crustacian.ingest.batch.v0
+  events: 1
+  target: /v1/ingest
+
+Result: sample batch ready for parser and ingest testing.</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
 <section id="usage" class="section">
     <div class="container">
         <h2 class="h3 mb-3">Basic usage</h2>
@@ -523,6 +600,53 @@ cargo build --release</code></pre>
 <script>
     // Set current year in footer
     document.getElementById("year").textContent = new Date().getFullYear();
+
+    const wasmCliOutput = document.getElementById("wasmCliOutput");
+    const runWasmCli = document.getElementById("runWasmCli");
+
+    if (wasmCliOutput && runWasmCli) {
+        const sampleLines = [
+            "$ crustacian-wasm telemetry sample --mode browser --emit-ingest-batch",
+            "Initializing WASM runtime...",
+            "Runtime: browser sandbox",
+            "Endpoint ID: demo-browser-endpoint",
+            "ClamAV engine: unavailable in browser; using simulated scan metadata",
+            "",
+            "Generated endpoint event:",
+            "  schema_version: crustacian.endpoint.telemetry.v0",
+            "  event_kind: scan.completed",
+            "  classifier: clamav.scan.clean",
+            "  severity: informational",
+            "  confidence: 0.72",
+            "  isolation_recommended: false",
+            "",
+            "Generated ingest batch:",
+            "  schema_version: crustacian.ingest.batch.v0",
+            "  events: 1",
+            "  target: /v1/ingest",
+            "",
+            "Result: sample batch ready for parser and ingest testing."
+        ];
+
+        runWasmCli.addEventListener("click", () => {
+            wasmCliOutput.textContent = "";
+            runWasmCli.disabled = true;
+            let index = 0;
+
+            const writeNextLine = () => {
+                if (index >= sampleLines.length) {
+                    runWasmCli.disabled = false;
+                    return;
+                }
+
+                wasmCliOutput.textContent += `${sampleLines[index]}\n`;
+                index += 1;
+                window.setTimeout(writeNextLine, 80);
+            };
+
+            writeNextLine();
+        });
+    }
 </script>
 
 </body>
