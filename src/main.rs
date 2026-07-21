@@ -1226,6 +1226,10 @@ fn siem_spool_path() -> PathBuf {
     endpoint_state_dir().join("siem-spool.ndjson")
 }
 
+fn siem_retry_state_path() -> PathBuf {
+    endpoint_state_dir().join("siem-spool-retry.json")
+}
+
 fn show_telemetry_spool_status() {
     match edr_transport::spool_stats(&siem_spool_path()) {
         Ok(stats) => {
@@ -1258,12 +1262,14 @@ fn ship_telemetry_spool_menu() {
     let max_batch_events = read_line().parse::<usize>().unwrap_or(100);
     let token = std::env::var("CRUSTACIAN_INGEST_TOKEN").ok();
 
-    match edr_transport::send_spool(
+    match edr_transport::send_spool_with_durable_retry(
         &siem_spool_path(),
+        &siem_retry_state_path(),
         &endpoint_id(),
         &ingest_url,
         token.as_deref(),
         max_batch_events,
+        &edr_transport::RetryPolicy::default(),
     ) {
         Ok(report) => {
             println!("Ingest status: HTTP {}", report.status_code);
@@ -1273,6 +1279,12 @@ fn ship_telemetry_spool_menu() {
             println!("Transport attempts: {}", report.transport_attempts);
             println!("Retry attempts: {}", report.retry_attempts);
             println!("Retry delay: {} ms", report.retry_delay_millis);
+            if let Some(retry_after_seconds) = report.retry_after_seconds {
+                println!("Retry after hint: {retry_after_seconds}s");
+            }
+            if let Some(next_retry_at) = report.next_retry_at {
+                println!("Next retry: {next_retry_at}");
+            }
             println!("Message: {}", report.message);
         }
         Err(e) => eprintln!("[!] Failed to ship telemetry spool: {e}"),

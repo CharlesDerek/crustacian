@@ -89,6 +89,12 @@ The built-in sender retries transient transport failures, HTTP `408`, HTTP
 attempts with bounded exponential backoff, full jitter, and a 30-second cap.
 Server `retry_after_seconds` hints are honored up to that cap.
 
+The interactive EDR preview menu uses durable retry scheduling. When a delivery
+attempt fails or the ingest server remains overloaded, the endpoint writes the
+next allowed attempt to `siem-spool-retry.json` beside the local telemetry spool.
+If an operator tries to ship again before that time, the CLI reports the retained
+events and returns immediately instead of sleeping inside the menu.
+
 The dry-run action still does not open a network connection. Explicit spool
 shipping from the EDR preview menu does.
 
@@ -129,9 +135,10 @@ When the server reaches `--max-in-flight`, it returns:
 
 The endpoint keeps the original events in `siem-spool.ndjson` and records a
 `transport.backpressure` event so operators can see that delivery was delayed.
-The endpoint retries the same batch before returning control to the operator;
-the CLI reports transport attempts, retry attempts, and accumulated retry
-delay.
+The reusable transport layer can retry a batch in process, while the interactive
+menu uses the durable retry file so backoff can survive CLI exits. The CLI
+reports transport attempts, retry attempts, accumulated retry delay, and the
+next retry time when delivery is deferred.
 
 ## authentik and LDAP Response Stages
 

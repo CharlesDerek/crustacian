@@ -43,6 +43,10 @@ honors `retry_after_seconds` up to its local retry cap, keeps undelivered events
 in the local spool, and appends a `transport.backpressure` event when the server
 continues to reject a batch with `429`.
 
+The interactive endpoint menu persists retry state beside the telemetry spool so
+operators are not blocked while backoff is active. A later manual ship attempt
+returns immediately until the saved next-attempt timestamp is due.
+
 ## Current Integrations
 
 - Local endpoint AV telemetry from ClamAV scan completion

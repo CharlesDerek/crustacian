@@ -46,6 +46,8 @@ pub struct DeliveryReport {
     pub transport_attempts: usize,
     pub retry_attempts: usize,
     pub retry_delay_millis: u128,
+    pub retry_after_seconds: Option<u64>,
+    pub next_retry_at: Option<String>,
     pub message: String,
 }
 
@@ -66,6 +68,13 @@ impl Default for RetryPolicy {
             jitter: true,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RetrySchedule {
+    pub consecutive_failures: usize,
+    pub next_attempt_at: Option<String>,
+    pub last_error: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -155,6 +164,105 @@ pub fn send_spool(
     )
 }
 
+pub fn send_spool_with_durable_retry(
+    spool_path: &Path,
+    retry_state_path: &Path,
+    endpoint_id: &str,
+    ingest_url: &str,
+    bearer_token: Option<&str>,
+    max_batch_events: usize,
+    retry_policy: &RetryPolicy,
+) -> io::Result<DeliveryReport> {
+    let schedule = read_retry_schedule(retry_state_path)?;
+    if let Some(next_attempt_at) = schedule.next_attempt_at.as_deref() {
+        if retry_not_due(next_attempt_at) {
+            let stats = spool_stats(spool_path)?;
+            return Ok(DeliveryReport {
+                attempted_events: 0,
+                delivered_events: 0,
+                retained_events: stats.queued_events,
+                status_code: 425,
+                transport_attempts: 0,
+                retry_attempts: 0,
+                retry_delay_millis: 0,
+                retry_after_seconds: None,
+                next_retry_at: Some(next_attempt_at.to_string()),
+                message: format!("delivery retry paused until {next_attempt_at}"),
+            });
+        }
+    }
+
+    let single_attempt_policy = RetryPolicy {
+        max_attempts: 1,
+        initial_backoff: retry_policy.initial_backoff,
+        max_backoff: retry_policy.max_backoff,
+        jitter: retry_policy.jitter,
+    };
+
+    match send_spool_with_retry(
+        spool_path,
+        endpoint_id,
+        ingest_url,
+        bearer_token,
+        max_batch_events,
+        &single_attempt_policy,
+    ) {
+        Ok(mut report) => {
+            if report.delivered_events > 0 || !is_retryable_status(report.status_code) {
+                clear_retry_schedule(retry_state_path)?;
+                return Ok(report);
+            }
+
+            if report.attempted_events > 0 {
+                let next_retry_at = write_next_retry_schedule(
+                    retry_state_path,
+                    retry_policy,
+                    &schedule,
+                    &report.message,
+                    report.retry_after_seconds,
+                )?;
+                report.next_retry_at = Some(next_retry_at);
+            }
+
+            Ok(report)
+        }
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::InvalidInput | io::ErrorKind::InvalidData
+            ) =>
+        {
+            clear_retry_schedule(retry_state_path)?;
+            Err(error)
+        }
+        Err(error) => {
+            let stats = spool_stats(spool_path)?;
+            let message = format!("transport delivery failed: {error}");
+            let next_retry_at = write_next_retry_schedule(
+                retry_state_path,
+                retry_policy,
+                &schedule,
+                &message,
+                None,
+            )?;
+            let _ = append_transport_event(spool_path, endpoint_id, &message);
+
+            Ok(DeliveryReport {
+                attempted_events: stats.queued_events.min(max_batch_events),
+                delivered_events: 0,
+                retained_events: stats.queued_events,
+                status_code: 0,
+                transport_attempts: 1,
+                retry_attempts: 0,
+                retry_delay_millis: 0,
+                retry_after_seconds: None,
+                next_retry_at: Some(next_retry_at),
+                message,
+            })
+        }
+    }
+}
+
 pub fn send_spool_with_retry(
     spool_path: &Path,
     endpoint_id: &str,
@@ -182,6 +290,8 @@ pub fn send_spool_with_retry(
             transport_attempts: 0,
             retry_attempts: 0,
             retry_delay_millis: 0,
+            retry_after_seconds: None,
+            next_retry_at: None,
             message: "spool is empty".to_string(),
         });
     }
@@ -216,6 +326,9 @@ pub fn send_spool_with_retry(
     let status_code = http_attempt.status_code;
     let response_body = http_attempt.response_body;
     let ingest_response = serde_json::from_slice::<IngestResponse>(&response_body).ok();
+    let retry_after_seconds = ingest_response
+        .as_ref()
+        .and_then(|response| response.retry_after_seconds);
 
     if (200..300).contains(&status_code) {
         remove_delivered_lines(spool_path, batch_lines.len())?;
@@ -227,6 +340,8 @@ pub fn send_spool_with_retry(
             transport_attempts: http_attempt.attempts,
             retry_attempts: http_attempt.retry_attempts,
             retry_delay_millis: http_attempt.retry_delay.as_millis(),
+            retry_after_seconds,
+            next_retry_at: None,
             message: ingest_response
                 .map(|response| response.message)
                 .unwrap_or_else(|| "batch accepted".to_string()),
@@ -249,10 +364,77 @@ pub fn send_spool_with_retry(
         transport_attempts: http_attempt.attempts,
         retry_attempts: http_attempt.retry_attempts,
         retry_delay_millis: http_attempt.retry_delay.as_millis(),
+        retry_after_seconds,
+        next_retry_at: None,
         message: ingest_response
             .map(|response| response.message)
             .unwrap_or_else(|| "ingest rejected batch".to_string()),
     })
+}
+
+fn read_retry_schedule(retry_state_path: &Path) -> io::Result<RetrySchedule> {
+    if !retry_state_path.exists() {
+        return Ok(RetrySchedule::default());
+    }
+
+    let content = fs::read_to_string(retry_state_path)?;
+    serde_json::from_str(&content).map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("retry state contains invalid JSON: {error}"),
+        )
+    })
+}
+
+fn clear_retry_schedule(retry_state_path: &Path) -> io::Result<()> {
+    if retry_state_path.exists() {
+        fs::remove_file(retry_state_path)?;
+    }
+    Ok(())
+}
+
+fn write_next_retry_schedule(
+    retry_state_path: &Path,
+    retry_policy: &RetryPolicy,
+    previous: &RetrySchedule,
+    message: &str,
+    retry_after_seconds: Option<u64>,
+) -> io::Result<String> {
+    if let Some(parent) = retry_state_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let consecutive_failures = previous.consecutive_failures.saturating_add(1);
+    let delay = retry_delay_for_schedule(retry_policy, consecutive_failures, retry_after_seconds);
+    let chrono_delay =
+        chrono::Duration::from_std(delay).unwrap_or_else(|_| chrono::Duration::seconds(0));
+    let next_retry_at = (chrono::Utc::now() + chrono_delay).to_rfc3339();
+    let schedule = RetrySchedule {
+        consecutive_failures,
+        next_attempt_at: Some(next_retry_at.clone()),
+        last_error: Some(message.to_string()),
+    };
+    let content = serde_json::to_string_pretty(&schedule)?;
+    fs::write(retry_state_path, content)?;
+    Ok(next_retry_at)
+}
+
+fn retry_not_due(next_attempt_at: &str) -> bool {
+    chrono::DateTime::parse_from_rfc3339(next_attempt_at)
+        .map(|value| value.with_timezone(&chrono::Utc) > chrono::Utc::now())
+        .unwrap_or(false)
+}
+
+fn retry_delay_for_schedule(
+    retry_policy: &RetryPolicy,
+    failed_attempt: usize,
+    retry_after_seconds: Option<u64>,
+) -> Duration {
+    if let Some(seconds) = retry_after_seconds {
+        return clamp_duration(Duration::from_secs(seconds), retry_policy.max_backoff);
+    }
+
+    retry_delay_for_attempt(retry_policy, failed_attempt, None)
 }
 
 pub fn write_accepted_events(data_dir: &Path, batch: &IngestBatch) -> io::Result<()> {
@@ -575,6 +757,7 @@ fn hostname() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn parses_http_url_with_default_path() {
@@ -660,11 +843,73 @@ mod tests {
     }
 
     #[test]
+    fn durable_schedule_honors_retry_after_hint_with_cap() {
+        let policy = RetryPolicy {
+            max_attempts: 1,
+            initial_backoff: Duration::from_secs(1),
+            max_backoff: Duration::from_secs(10),
+            jitter: false,
+        };
+
+        assert_eq!(
+            retry_delay_for_schedule(&policy, 3, Some(60)),
+            Duration::from_secs(10)
+        );
+    }
+
+    #[test]
     fn classifies_transient_http_statuses() {
         assert!(is_retryable_status(408));
         assert!(is_retryable_status(429));
         assert!(is_retryable_status(503));
         assert!(!is_retryable_status(400));
         assert!(!is_retryable_status(202));
+    }
+
+    #[test]
+    fn durable_retry_state_pauses_delivery_until_next_attempt() {
+        let dir = test_temp_dir("durable-retry-pauses");
+        fs::create_dir_all(&dir).unwrap();
+        let spool_path = dir.join("spool.ndjson");
+        let retry_state_path = dir.join("spool-retry.json");
+        fs::write(&spool_path, "{}\n").unwrap();
+        let next_attempt_at = (chrono::Utc::now() + chrono::Duration::minutes(5)).to_rfc3339();
+        let schedule = RetrySchedule {
+            consecutive_failures: 2,
+            next_attempt_at: Some(next_attempt_at.clone()),
+            last_error: Some("previous failure".to_string()),
+        };
+        fs::write(
+            &retry_state_path,
+            serde_json::to_string_pretty(&schedule).unwrap(),
+        )
+        .unwrap();
+
+        let report = send_spool_with_durable_retry(
+            &spool_path,
+            &retry_state_path,
+            "endpoint-1",
+            "http://127.0.0.1:8080/v1/ingest",
+            None,
+            100,
+            &RetryPolicy::default(),
+        )
+        .unwrap();
+
+        assert_eq!(report.status_code, 425);
+        assert_eq!(report.attempted_events, 0);
+        assert_eq!(report.retained_events, 1);
+        assert_eq!(report.next_retry_at, Some(next_attempt_at));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    fn test_temp_dir(name: &str) -> PathBuf {
+        let unique = format!(
+            "crustacian-{name}-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        );
+        std::env::temp_dir().join(unique)
     }
 }
