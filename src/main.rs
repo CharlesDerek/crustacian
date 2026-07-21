@@ -9,6 +9,8 @@ use std::time::{Duration, Instant};
 
 use sha2::{Digest, Sha256};
 
+use crustacian::edr_transport;
+
 #[cfg(windows)]
 const DEFAULT_CLAM_DIR: &str = r"C:\Program Files\ClamAV";
 #[cfg(unix)]
@@ -450,7 +452,9 @@ fn endpoint_rd_menu() {
     println!("2. Generate local endpoint telemetry snapshot");
     println!("3. Generate response action plan");
     println!("4. Run first-stage integration dry run");
-    println!("5. Back");
+    println!("5. Show local telemetry spool status");
+    println!("6. Ship telemetry spool to ingest server");
+    println!("7. Back");
     print!("Choice: ");
     flush_stdout();
 
@@ -474,7 +478,9 @@ fn endpoint_rd_menu() {
             Ok(path) => println!("Wrote integration dry-run record: {}", path.display()),
             Err(e) => eprintln!("[!] Failed to write integration dry-run record: {e}"),
         },
-        "5" => return,
+        "5" => show_telemetry_spool_status(),
+        "6" => ship_telemetry_spool_menu(),
+        "7" => return,
         _ => println!("Invalid option."),
     }
 
@@ -1214,6 +1220,60 @@ fn append_siem_spool(payload: &str) -> io::Result<()> {
         .open(path)?;
     writeln!(file, "{payload}")?;
     Ok(())
+}
+
+fn siem_spool_path() -> PathBuf {
+    endpoint_state_dir().join("siem-spool.ndjson")
+}
+
+fn show_telemetry_spool_status() {
+    match edr_transport::spool_stats(&siem_spool_path()) {
+        Ok(stats) => {
+            println!("Telemetry spool: {}", siem_spool_path().display());
+            println!("Queued events: {}", stats.queued_events);
+            println!("Disk bytes: {}", stats.disk_bytes);
+            println!(
+                "Dropped low-priority events: {}",
+                stats.dropped_low_priority_events
+            );
+        }
+        Err(e) => eprintln!("[!] Failed to inspect telemetry spool: {e}"),
+    }
+}
+
+fn ship_telemetry_spool_menu() {
+    let default_url = std::env::var("CRUSTACIAN_INGEST_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:8080/v1/ingest".to_string());
+    println!("Ingest URL [{default_url}]: ");
+    flush_stdout();
+    let input_url = read_line();
+    let ingest_url = if input_url.trim().is_empty() {
+        default_url
+    } else {
+        input_url
+    };
+
+    println!("Max batch events [100]: ");
+    flush_stdout();
+    let max_batch_events = read_line().parse::<usize>().unwrap_or(100);
+    let token = std::env::var("CRUSTACIAN_INGEST_TOKEN").ok();
+
+    match edr_transport::send_spool(
+        &siem_spool_path(),
+        &endpoint_id(),
+        &ingest_url,
+        token.as_deref(),
+        max_batch_events,
+    ) {
+        Ok(report) => {
+            println!("Ingest status: HTTP {}", report.status_code);
+            println!("Attempted events: {}", report.attempted_events);
+            println!("Delivered events: {}", report.delivered_events);
+            println!("Retained events: {}", report.retained_events);
+            println!("Message: {}", report.message);
+        }
+        Err(e) => eprintln!("[!] Failed to ship telemetry spool: {e}"),
+    }
 }
 
 fn env_is_set(name: &str) -> bool {

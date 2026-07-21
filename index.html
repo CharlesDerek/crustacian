@@ -2,10 +2,10 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Crustacian — Rust-Based Antivirus CLI for ClamAV</title>
+    <title>Crustacian — Rust AV Endpoint and EDR Telemetry Ingest</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
 
-    <meta name="description" content="Crustacian is an open-source Rust-based CLI that automates ClamAV installation, updates, and scanning across Windows, macOS, and Linux.">
+    <meta name="description" content="Crustacian is an open-source Rust AV endpoint and EDR telemetry starter with ClamAV automation, local evidence capture, server-side ingest, and backpressure-aware telemetry shipping.">
 
     <!-- Bootstrap 5 CSS (CDN) -->
     <link
@@ -102,6 +102,7 @@
             <ul class="navbar-nav">
                 <li class="nav-item"><a class="nav-link" href="#about">About</a></li>
                 <li class="nav-item"><a class="nav-link" href="#features">Features</a></li>
+                <li class="nav-item"><a class="nav-link" href="#integrations">Integrations</a></li>
                 <li class="nav-item"><a class="nav-link" href="#usage">Usage</a></li>
                 <li class="nav-item">
                     <a class="btn btn-outline-light btn-sm ms-lg-3" href="https://github.com/CharlesDerek/crustacian" target="_blank" rel="noopener">
@@ -121,16 +122,15 @@
                     <img class="hero-logo__img" src="/assets/logo/3cc0de91-65e5-4d18-9dac-88bc3c8920bf.gif" />
                 </div>
                 <span class="badge bg-success-subtle text-success-emphasis badge-pill mb-3">
-                    Rust · Open Source · ClamAV Automation
+                    Rust · Open Source · AV Endpoint + EDR Ingest
                 </span>
                 <h1 class="hero-title mb-3">
-                    Crustacian — a Rust-powered CLI for ClamAV automation
+                    Crustacian — a Rust AV endpoint with EDR telemetry ingest
                 </h1>
                 <p class="hero-subtitle mb-4">
-                    Crustacian is a cross-platform command-line tool written in Rust that
-                    installs, configures, and drives ClamAV + FreshClam across Windows,
-                    macOS, and Linux. Built for developers, sysadmins, and security teams
-                    who want predictable, scriptable antivirus scanning.
+                    Crustacian installs, configures, and drives ClamAV while producing
+                    local endpoint evidence, EDR telemetry, disabled response plans, and
+                    backpressure-aware batches for a server-side ingest service.
                 </p>
                 <div class="d-flex flex-wrap gap-2 mb-4">
                     <a href="https://github.com/CharlesDerek/crustacian" target="_blank" rel="noopener"
@@ -152,16 +152,16 @@
                             Quick Overview
                         </h6>
                         <ul class="list-unstyled mb-3 small">
-                            <li>✅ Rust-based, single binary CLI</li>
+                            <li>✅ Rust-based endpoint CLI</li>
                             <li>✅ Installs & configures ClamAV and FreshClam</li>
                             <li>✅ Quick / full / custom path scans</li>
-                            <li>✅ Live progress, throughput, and ETA</li>
-                            <li>✅ Logs results for later review or automation</li>
+                            <li>✅ NDJSON endpoint telemetry spool</li>
+                            <li>✅ Server-side ingest with backpressure hints</li>
                         </ul>
                         <div class="small text-secondary">
-                            Perfect for servers, lab environments, CI checks, and
-                            security research workflows where you want transparent,
-                            scriptable antivirus scans.
+                            Built for lab environments, managed endpoints, SOC
+                            workflows, and security research where transparent local
+                            evidence matters before enforcement is enabled.
                         </div>
                     </div>
                 </div>
@@ -211,9 +211,9 @@
                         </div>
                         <hr class="my-3 border-secondary-subtle">
                         <p class="small text-secondary mb-0">
-                            Crustacian doesn’t phone home, doesn’t collect data,
-                            and doesn’t lock you into any vendor ecosystem. It’s a
-                            simple, inspectable tool you can fork, extend, or embed.
+                    Crustacian does not phone home by default. Telemetry shipping is
+                    explicit, endpoint-controlled, and designed to retain local evidence
+                    when an ingest server is unavailable or overloaded.
                         </p>
                     </div>
                 </div>
@@ -266,6 +266,58 @@
     </div>
 </section>
 
+<section id="integrations" class="section">
+    <div class="container">
+        <h2 class="h3 mb-4 text-center">EDR + AV integrations</h2>
+        <div class="row g-4">
+            <div class="col-md-3">
+                <div class="card h-100">
+                    <div class="card-body">
+                        <h3 class="card-title h5">Endpoint AV</h3>
+                        <p class="card-text small text-secondary">
+                            ClamAV scans, FreshClam lifecycle checks, infection
+                            evidence, local snapshots, and disabled response plans.
+                        </p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card h-100">
+                    <div class="card-body">
+                        <h3 class="card-title h5">EDR Telemetry</h3>
+                        <p class="card-text small text-secondary">
+                            Endpoint events are written as NDJSON with stable IDs,
+                            classifier fields, recommendation flags, and evidence hashes.
+                        </p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card h-100">
+                    <div class="card-body">
+                        <h3 class="card-title h5">Server Ingest</h3>
+                        <p class="card-text small text-secondary">
+                            The crustacian-ingest binary accepts /v1/ingest
+                            batches, validates required fields, and persists telemetry.
+                        </p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card h-100">
+                    <div class="card-body">
+                        <h3 class="card-title h5">Backpressure</h3>
+                        <p class="card-text small text-secondary">
+                            Overloaded ingest returns retry and max-batch hints. The
+                            endpoint keeps undelivered telemetry in the local spool.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
 <section id="usage" class="section">
     <div class="container">
         <h2 class="h3 mb-3">Basic usage</h2>
@@ -288,7 +340,10 @@ cargo build --release</code></pre>
 .\target\release\crustacian.exe
 
 # On Linux / macOS
-./target/release/crustacian</code></pre>
+./target/release/crustacian
+
+# Server-side telemetry ingest
+./target/release/crustacian-ingest --bind 127.0.0.1:8080</code></pre>
             </div>
             <div class="col-lg-6">
                 <h3 class="h6">Example workflow</h3>
@@ -302,10 +357,11 @@ cargo build --release</code></pre>
 #    - Full scan: whole volume
 #    - Custom scan: specify paths
 
-# 3. Review history
+# 3. Review history and telemetry
 #    - View past scan summaries
 #    - Inspect infection lists
-#    - Use logs in your own workflows</code></pre>
+#    - Show endpoint telemetry spool status
+#    - Ship telemetry to /v1/ingest</code></pre>
             </div>
         </div>
     </div>
@@ -315,7 +371,7 @@ cargo build --release</code></pre>
     <div class="container">
         <div class="d-flex flex-column flex-md-row justify-content-between align-items-center gap-2">
             <div class="footer">
-                © <span id="year"></span> Crustacian — Open-source Rust antivirus CLI.
+                © <span id="year"></span> Crustacian — Open-source Rust AV endpoint and EDR ingest.
             </div>
             <div class="footer">
                 <a href="https://github.com/CharlesDerek/crustacian" target="_blank" rel="noopener" class="link-light">

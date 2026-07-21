@@ -1,6 +1,6 @@
 # 🦀 **Project Crustacian**
 
-### **An enterprise-ready, cross-platform Rust CLI for automated ClamAV deployment, lifecycle management, and blue-team security operations.**
+### **An enterprise-ready Rust AV endpoint and EDR telemetry starter for automated ClamAV deployment, local evidence capture, and server-side ingest.**
 
 ---
   <p>
@@ -10,7 +10,7 @@
 
 ## 🌐 Overview
 
-**Crustacian** is an open-source, vendor-neutral command-line tool written in **Rust**, designed to simplify deployment and operation of the **ClamAV** antivirus engine across multiple operating systems.
+**Crustacian** is an open-source, vendor-neutral endpoint security project written in **Rust**, designed to simplify deployment and operation of the **ClamAV** antivirus engine while adding local EDR telemetry and a lightweight server-side ingest path.
 
 It provides a consistent, secure, and predictable interface for:
 
@@ -20,6 +20,8 @@ It provides a consistent, secure, and predictable interface for:
 * Viewing detailed results with throughput, progress, and ETA metrics
 * Exporting structured logs for integration into SIEM/SOAR/automation pipelines
 * Generating endpoint telemetry and disabled response plans for EDR R&D
+* Shipping local NDJSON telemetry batches to a built-in ingest server
+* Applying basic ingest backpressure with retry hints and retained endpoint spool data
 
 Crustacian is designed for **individuals, developers, sysadmins, SOC teams, and enterprise environments** where cross-platform consistency and automation matter.
 
@@ -35,7 +37,9 @@ Crustacian is designed for **individuals, developers, sysadmins, SOC teams, and 
 | **Interactive Scan CLI**    | Quick / full / folder-targeted scans                                    |
 | **Live Metrics**            | Progress %, files/sec, ETA, infected count, skipped files               |
 | **Structured Logging**      | JSON + human-readable summary logs for automation systems               |
-| **Endpoint R&D Telemetry**  | Local NDJSON event spool, endpoint snapshots, dry-run integration checks, and response plan drafts |
+| **Endpoint R&D Telemetry**  | Local NDJSON event spool, endpoint snapshots, dry-run integration checks, response plan drafts, and ingest shipping |
+| **Server-Side Ingest**      | `crustacian-ingest` accepts endpoint batches and persists telemetry NDJSON |
+| **Backpressure Controls**   | Server returns `429` with retry/max-batch hints; endpoint retains spool |
 | **Config Management**       | Auto-generates safe default ClamAV and FreshClam configs                |
 | **Extensible Architecture** | Designed for future modules (scheduling, remote scanning, local agents) |
 
@@ -66,13 +70,14 @@ cd crustacian
 cargo build --release
 ```
 
-The optimized binary will appear at:
+The optimized binaries will appear at:
 
 ```
 target/release/crustacian
+target/release/crustacian-ingest
 ```
 
-(Windows: `crustacian.exe`)
+(Windows: `.exe` suffix)
 
 ---
 
@@ -95,6 +100,30 @@ You’ll see a menu similar to:
 5. Exit
 ```
 
+The EDR preview menu can show the local telemetry spool and ship it to the
+server-side ingest API.
+
+### **Start the ingest server**
+
+```bash
+target/release/crustacian-ingest \
+  --bind 127.0.0.1:8080 \
+  --data-dir target/crustacian-ingest
+```
+
+Endpoints submit batches to:
+
+```text
+POST http://127.0.0.1:8080/v1/ingest
+GET  http://127.0.0.1:8080/health
+```
+
+Accepted telemetry is persisted as:
+
+```text
+target/crustacian-ingest/telemetry.ndjson
+```
+
 ### **Running a scan directly (non-interactive)**
 
 *(Planned — see Roadmap)*
@@ -113,12 +142,11 @@ crustacian scan --full
 crustacian/
 │
 ├── src/
-│   ├── main.rs          # CLI entrypoint
-│   ├── cli/             # Menus, argument parsing, UX
-│   ├── platform/        # OS-specific ClamAV helpers
-│   ├── scan/            # Scanner logic + metrics
-│   └── logs/            # Logging utilities (structured output)
-│
+│   ├── main.rs                  # AV endpoint CLI and EDR preview menu
+│   ├── lib.rs                   # Shared library exports
+│   ├── edr_transport.rs         # Telemetry batching, HTTP sender, validation
+│   └── bin/crustacian-ingest.rs # Server-side ingest API
+├── schemas/                     # Endpoint event and ingest batch contracts
 ├── docs/                # Additional developer docs
 └── README.md
 ```
@@ -142,7 +170,15 @@ Crustacian separates responsibilities into simple, testable modules:
   Stores results in both human-readable and structured JSON formats.
 
 * **CLI Layer**
-  Provides interactive and upcoming non-interactive interfaces.
+  Provides interactive AV operations and EDR preview controls.
+
+* **Endpoint Transport Layer**
+  Batches local `siem-spool.ndjson` telemetry, sends it to an HTTP ingest endpoint,
+  and retains events when delivery fails or the server applies backpressure.
+
+* **Server Ingest Layer**
+  Accepts `/v1/ingest` batches, validates required telemetry fields, persists
+  accepted events as NDJSON, and returns retry/max-batch hints under load.
 
 This modular approach ensures Crustacian can be embedded into:
 
@@ -192,8 +228,9 @@ Upcoming milestones include:
 * Scheduled scan module
 * Plugin-based output formatting
 * Remote-report mode (print-only vs write-to-log modes)
-* Optional SIEM transport with authenticated delivery and retry queue
+* Optional HTTPS/syslog SIEM transport with authenticated delivery and retry queue
 * authentik/LDAP response connector in dry-run mode
+* Durable server queue and exporter workers for OpenSearch, Splunk HEC, Elastic, and Sentinel-compatible collectors
 
 ### **Long Term**
 

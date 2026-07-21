@@ -3,7 +3,8 @@
 This document defines the initial research and development shape for expanding
 Crustacian from a local ClamAV driver into a lightweight endpoint telemetry and
 response agent. The current implementation is intentionally non-destructive:
-it writes local telemetry, snapshots, and disabled response plans only.
+it writes local telemetry, snapshots, disabled response plans, and optionally
+ships telemetry to a Crustacian ingest server.
 
 ## Goals
 
@@ -24,6 +25,8 @@ The CLI exposes `Endpoint EDR R&D preview` with three safe actions:
 - Generate a disabled response plan for security-team review.
 - Run a first-stage integration dry run for SIEM, authentik, LDAP, and
   containment readiness.
+- Show the local telemetry spool status.
+- Ship the telemetry spool to `crustacian-ingest`.
 
 Scan completion also writes `endpoint_event.ndjson` in the scan report directory
 and appends the same event to the local SIEM spool:
@@ -65,21 +68,61 @@ Classification examples:
 
 ## SIEM Integration Stages
 
-1. Local spool only: write validated NDJSON locally.
-2. Transport abstraction: add HTTPS/syslog output interfaces.
-3. Authenticated delivery: add bearer-token or mTLS support.
-4. Reliability controls: retry queue, backoff, disk cap, and dead-letter files.
+1. Local spool: write validated NDJSON locally.
+2. Built-in HTTP transport: batch events to `crustacian-ingest`.
+3. Authenticated delivery: optional bearer-token header for the built-in sender.
+4. Reliability controls: retain failed batches and record server backpressure.
 5. Parser packs: publish field mappings for target SIEMs.
 
-No SIEM network delivery is active in the current code.
+The current built-in sender supports `http://` ingest URLs for local labs and
+controlled internal deployments. TLS termination should be placed in front of
+the ingest server for production-style environments until native HTTPS/mTLS is
+implemented.
 
-Stage-one SIEM readiness checks read these environment variables only to decide
-whether a sender could be configured later:
+The endpoint sender reads:
 
-- `CRUSTACIAN_SIEM_URL`
-- `CRUSTACIAN_SIEM_TOKEN`
+- `CRUSTACIAN_INGEST_URL`
+- `CRUSTACIAN_INGEST_TOKEN`
 
-The dry run does not open a network connection.
+The dry-run action still does not open a network connection. Explicit spool
+shipping from the EDR preview menu does.
+
+## Server-Side Ingest
+
+The `crustacian-ingest` binary provides the first server-side segment:
+
+- `GET /health`
+- `POST /v1/ingest`
+- batch schema validation
+- required endpoint event field validation
+- NDJSON persistence under the configured data directory
+- active-request backpressure using HTTP `429`
+
+Run locally:
+
+```bash
+cargo run --bin crustacian-ingest -- \
+  --bind 127.0.0.1:8080 \
+  --data-dir target/crustacian-ingest
+```
+
+Then use the endpoint EDR preview menu to ship the local spool to:
+
+```text
+http://127.0.0.1:8080/v1/ingest
+```
+
+## Backpressure Behavior
+
+When the server reaches `--max-in-flight`, it returns:
+
+- HTTP `429`
+- `retry_after_seconds`
+- `max_batch_events`
+- `accepted: false`
+
+The endpoint keeps the original events in `siem-spool.ndjson` and records a
+`transport.backpressure` event so operators can see that delivery was delayed.
 
 ## authentik and LDAP Response Stages
 
