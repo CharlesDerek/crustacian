@@ -69,16 +69,15 @@ Classification examples:
 ## SIEM Integration Stages
 
 1. Local spool: write validated NDJSON locally.
-2. Built-in HTTP transport: batch events to `crustacian-ingest`.
+2. Built-in HTTP/HTTPS transport: batch events to `crustacian-ingest`.
 3. Authenticated delivery: optional bearer-token header for the built-in sender.
 4. Reliability controls: retry transient delivery failures with exponential
    backoff and jitter, retain failed batches, and record server backpressure.
 5. Parser packs: publish field mappings for target SIEMs.
 
 The current built-in sender supports `http://` ingest URLs for local labs and
-controlled internal deployments. TLS termination should be placed in front of
-the ingest server for production-style environments until native HTTPS/mTLS is
-implemented.
+`https://` ingest URLs for deployments with TLS termination in front of the
+ingest server. Native mTLS is not implemented yet.
 
 The endpoint sender reads:
 
@@ -116,6 +115,7 @@ Then use the endpoint EDR preview menu to ship the local spool to:
 
 ```text
 http://127.0.0.1:8080/v1/ingest
+https://ingest.example.com/v1/ingest
 ```
 
 ## Backpressure Behavior

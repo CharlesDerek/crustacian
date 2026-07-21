@@ -20,8 +20,8 @@ It provides a consistent, secure, and predictable interface for:
 * Viewing detailed results with throughput, progress, and ETA metrics
 * Exporting structured logs for integration into SIEM/SOAR/automation pipelines
 * Generating endpoint telemetry and disabled response plans for EDR R&D
-* Shipping local NDJSON telemetry batches to a built-in ingest server
-* Applying basic ingest backpressure with retry hints and retained endpoint spool data
+* Shipping local NDJSON telemetry batches to a built-in ingest server over HTTP or HTTPS
+* Applying ingest backpressure with retry hints, exponential backoff, jitter, and retained endpoint spool data
 
 Crustacian is designed for **individuals, developers, sysadmins, SOC teams, and enterprise environments** where cross-platform consistency and automation matter.
 
@@ -39,7 +39,7 @@ Crustacian is designed for **individuals, developers, sysadmins, SOC teams, and 
 | **Structured Logging**      | JSON + human-readable summary logs for automation systems               |
 | **Endpoint R&D Telemetry**  | Local NDJSON event spool, endpoint snapshots, dry-run integration checks, response plan drafts, and ingest shipping |
 | **Server-Side Ingest**      | `crustacian-ingest` accepts endpoint batches and persists telemetry NDJSON |
-| **Backpressure Controls**   | Server returns `429` with retry/max-batch hints; endpoint retains spool |
+| **Backpressure Controls**   | Server returns `429` with retry/max-batch hints; endpoint retries with backoff and retains spool |
 | **Config Management**       | Auto-generates safe default ClamAV and FreshClam configs                |
 | **Extensible Architecture** | Designed for future modules (scheduling, remote scanning, local agents) |
 
@@ -115,6 +115,7 @@ Endpoints submit batches to:
 
 ```text
 POST http://127.0.0.1:8080/v1/ingest
+POST https://ingest.example.com/v1/ingest
 GET  http://127.0.0.1:8080/health
 ```
 
@@ -173,8 +174,10 @@ Crustacian separates responsibilities into simple, testable modules:
   Provides interactive AV operations and EDR preview controls.
 
 * **Endpoint Transport Layer**
-  Batches local `siem-spool.ndjson` telemetry, sends it to an HTTP ingest endpoint,
-  and retains events when delivery fails or the server applies backpressure.
+  Batches local `siem-spool.ndjson` telemetry, sends it to an HTTP or HTTPS
+  ingest endpoint, retries transient delivery failures with bounded exponential
+  backoff and jitter, and retains events when delivery fails or the server
+  applies backpressure.
 
 * **Server Ingest Layer**
   Accepts `/v1/ingest` batches, validates required telemetry fields, persists
@@ -222,13 +225,20 @@ Upcoming milestones include:
 * Enhanced logging (CSV, NDJSON, syslog integration)
 * SIEM-ready endpoint event schema validation
 * Dry-run SIEM/authentik/LDAP/containment readiness checks
+* HTTPS endpoint ingest transport while preserving HTTP for local labs
+* Documented endpoint delivery roadmap for durable retries, configurable retry
+  policy, ingest authentication, and CI target checks
 
 ### **Medium Term**
 
 * Scheduled scan module
 * Plugin-based output formatting
 * Remote-report mode (print-only vs write-to-log modes)
-* Optional HTTPS/syslog SIEM transport with authenticated delivery and retry queue
+* Durable retry scheduling so endpoint shipping does not block the interactive CLI
+* Configurable retry policy through environment or endpoint config
+* Server-side ingest authentication validation for bearer-token protected intake
+* CI target matrix for Windows, Linux, and macOS checks
+* Optional syslog SIEM transport with authenticated delivery and retry queue
 * authentik/LDAP response connector in dry-run mode
 * Durable server queue and exporter workers for OpenSearch, Splunk HEC, Elastic, and Sentinel-compatible collectors
 

@@ -70,9 +70,11 @@ impl Default for RetryPolicy {
 
 #[derive(Debug, Clone)]
 struct HttpTarget {
+    scheme: String,
     host: String,
     port: u16,
     path: String,
+    url: String,
 }
 
 #[derive(Debug, Clone)]
@@ -335,6 +337,10 @@ fn post_json(
     bearer_token: Option<&str>,
     body: &[u8],
 ) -> io::Result<(u16, Vec<u8>)> {
+    if target.scheme == "https" {
+        return post_json_https(target, bearer_token, body);
+    }
+
     let mut stream = TcpStream::connect((target.host.as_str(), target.port))?;
     stream.set_read_timeout(Some(Duration::from_secs(15)))?;
     stream.set_write_timeout(Some(Duration::from_secs(15)))?;
@@ -358,6 +364,36 @@ fn post_json(
     let mut response = Vec::new();
     stream.read_to_end(&mut response)?;
     parse_http_response(&response)
+}
+
+fn post_json_https(
+    target: &HttpTarget,
+    bearer_token: Option<&str>,
+    body: &[u8],
+) -> io::Result<(u16, Vec<u8>)> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|error| io::Error::new(io::ErrorKind::Other, error))?;
+    let mut request = client
+        .post(&target.url)
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .body(body.to_vec());
+
+    if let Some(token) = bearer_token.filter(|token| !token.trim().is_empty()) {
+        request = request.bearer_auth(token);
+    }
+
+    let response = request
+        .send()
+        .map_err(|error| io::Error::new(io::ErrorKind::Other, error))?;
+    let status_code = response.status().as_u16();
+    let response_body = response
+        .bytes()
+        .map_err(|error| io::Error::new(io::ErrorKind::Other, error))?
+        .to_vec();
+
+    Ok((status_code, response_body))
 }
 
 fn post_json_with_retry(
@@ -463,20 +499,30 @@ fn clamp_duration(value: Duration, max: Duration) -> Duration {
 }
 
 fn parse_http_url(url: &str) -> io::Result<HttpTarget> {
-    let without_scheme = url.strip_prefix("http://").ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "only http:// ingest URLs are supported by the built-in sender",
-        )
-    })?;
+    let (scheme, without_scheme, default_port) =
+        if let Some(without_scheme) = url.strip_prefix("http://") {
+            ("http", without_scheme, 80)
+        } else if let Some(without_scheme) = url.strip_prefix("https://") {
+            ("https", without_scheme, 443)
+        } else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "only http:// and https:// ingest URLs are supported by the built-in sender",
+            ));
+        };
     let (host_port, path) = without_scheme
         .split_once('/')
         .map(|(host, path)| (host, format!("/{path}")))
         .unwrap_or((without_scheme, "/v1/ingest".to_string()));
     let (host, port) = host_port
         .split_once(':')
-        .map(|(host, port)| (host.to_string(), port.parse::<u16>().unwrap_or(80)))
-        .unwrap_or((host_port.to_string(), 80));
+        .map(|(host, port)| {
+            (
+                host.to_string(),
+                port.parse::<u16>().unwrap_or(default_port),
+            )
+        })
+        .unwrap_or((host_port.to_string(), default_port));
 
     if host.trim().is_empty() {
         return Err(io::Error::new(
@@ -485,7 +531,15 @@ fn parse_http_url(url: &str) -> io::Result<HttpTarget> {
         ));
     }
 
-    Ok(HttpTarget { host, port, path })
+    let normalized_url = format!("{scheme}://{host_port}{path}");
+
+    Ok(HttpTarget {
+        scheme: scheme.to_string(),
+        host,
+        port,
+        path,
+        url: normalized_url,
+    })
 }
 
 fn parse_http_response(response: &[u8]) -> io::Result<(u16, Vec<u8>)> {
@@ -525,14 +579,26 @@ mod tests {
     #[test]
     fn parses_http_url_with_default_path() {
         let target = parse_http_url("http://127.0.0.1:8080").unwrap();
+        assert_eq!(target.scheme, "http");
         assert_eq!(target.host, "127.0.0.1");
         assert_eq!(target.port, 8080);
         assert_eq!(target.path, "/v1/ingest");
+        assert_eq!(target.url, "http://127.0.0.1:8080/v1/ingest");
     }
 
     #[test]
-    fn rejects_https_for_builtin_sender() {
-        assert!(parse_http_url("https://example.com").is_err());
+    fn parses_https_url_with_default_path() {
+        let target = parse_http_url("https://ingest.example.com").unwrap();
+        assert_eq!(target.scheme, "https");
+        assert_eq!(target.host, "ingest.example.com");
+        assert_eq!(target.port, 443);
+        assert_eq!(target.path, "/v1/ingest");
+        assert_eq!(target.url, "https://ingest.example.com/v1/ingest");
+    }
+
+    #[test]
+    fn rejects_unsupported_ingest_url_scheme() {
+        assert!(parse_http_url("ftp://example.com").is_err());
     }
 
     #[test]

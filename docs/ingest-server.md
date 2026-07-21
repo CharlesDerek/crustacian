@@ -48,7 +48,7 @@ continues to reject a batch with `429`.
 - Local endpoint AV telemetry from ClamAV scan completion
 - Endpoint snapshot hash evidence
 - Disabled response-plan records for identity and containment review
-- HTTP batch ingest with optional bearer-token header
+- HTTP/HTTPS batch ingest sender with optional bearer-token header
 - Server-side NDJSON telemetry persistence
 
 ## Planned Exporters
