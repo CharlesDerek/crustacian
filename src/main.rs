@@ -1270,6 +1270,9 @@ fn ship_telemetry_spool_menu() {
             println!("Attempted events: {}", report.attempted_events);
             println!("Delivered events: {}", report.delivered_events);
             println!("Retained events: {}", report.retained_events);
+            println!("Transport attempts: {}", report.transport_attempts);
+            println!("Retry attempts: {}", report.retry_attempts);
+            println!("Retry delay: {} ms", report.retry_delay_millis);
             println!("Message: {}", report.message);
         }
         Err(e) => eprintln!("[!] Failed to ship telemetry spool: {e}"),

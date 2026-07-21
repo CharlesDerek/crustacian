@@ -37,8 +37,11 @@ it returns HTTP `429` with:
 - `max_batch_events`
 - `accepted: false`
 
-The endpoint sender keeps undelivered events in the local spool. It also appends
-a `transport.backpressure` event when the server rejects a batch with `429`.
+The endpoint sender retries transient transport failures, HTTP `408`, HTTP
+`429`, and HTTP `5xx` responses with bounded exponential backoff and jitter. It
+honors `retry_after_seconds` up to its local retry cap, keeps undelivered events
+in the local spool, and appends a `transport.backpressure` event when the server
+continues to reject a batch with `429`.
 
 ## Current Integrations
 

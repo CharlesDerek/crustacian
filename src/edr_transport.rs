@@ -2,7 +2,8 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, TcpStream};
 use std::path::Path;
-use std::time::Duration;
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -42,7 +43,29 @@ pub struct DeliveryReport {
     pub delivered_events: usize,
     pub retained_events: usize,
     pub status_code: u16,
+    pub transport_attempts: usize,
+    pub retry_attempts: usize,
+    pub retry_delay_millis: u128,
     pub message: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct RetryPolicy {
+    pub max_attempts: usize,
+    pub initial_backoff: Duration,
+    pub max_backoff: Duration,
+    pub jitter: bool,
+}
+
+impl Default for RetryPolicy {
+    fn default() -> Self {
+        Self {
+            max_attempts: 4,
+            initial_backoff: Duration::from_secs(1),
+            max_backoff: Duration::from_secs(30),
+            jitter: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -50,6 +73,15 @@ struct HttpTarget {
     host: String,
     port: u16,
     path: String,
+}
+
+#[derive(Debug, Clone)]
+struct HttpAttempt {
+    status_code: u16,
+    response_body: Vec<u8>,
+    attempts: usize,
+    retry_attempts: usize,
+    retry_delay: Duration,
 }
 
 pub fn spool_stats(spool_path: &Path) -> io::Result<SpoolStats> {
@@ -111,6 +143,24 @@ pub fn send_spool(
     bearer_token: Option<&str>,
     max_batch_events: usize,
 ) -> io::Result<DeliveryReport> {
+    send_spool_with_retry(
+        spool_path,
+        endpoint_id,
+        ingest_url,
+        bearer_token,
+        max_batch_events,
+        &RetryPolicy::default(),
+    )
+}
+
+pub fn send_spool_with_retry(
+    spool_path: &Path,
+    endpoint_id: &str,
+    ingest_url: &str,
+    bearer_token: Option<&str>,
+    max_batch_events: usize,
+    retry_policy: &RetryPolicy,
+) -> io::Result<DeliveryReport> {
     if max_batch_events == 0 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -127,6 +177,9 @@ pub fn send_spool(
             delivered_events: 0,
             retained_events: 0,
             status_code: 204,
+            transport_attempts: 0,
+            retry_attempts: 0,
+            retry_delay_millis: 0,
             message: "spool is empty".to_string(),
         });
     }
@@ -157,7 +210,9 @@ pub fn send_spool(
 
     let target = parse_http_url(ingest_url)?;
     let body = serde_json::to_vec(&batch)?;
-    let (status_code, response_body) = post_json(&target, bearer_token, &body)?;
+    let http_attempt = post_json_with_retry(&target, bearer_token, &body, retry_policy)?;
+    let status_code = http_attempt.status_code;
+    let response_body = http_attempt.response_body;
     let ingest_response = serde_json::from_slice::<IngestResponse>(&response_body).ok();
 
     if (200..300).contains(&status_code) {
@@ -167,6 +222,9 @@ pub fn send_spool(
             delivered_events: batch_lines.len(),
             retained_events: retained_before_send,
             status_code,
+            transport_attempts: http_attempt.attempts,
+            retry_attempts: http_attempt.retry_attempts,
+            retry_delay_millis: http_attempt.retry_delay.as_millis(),
             message: ingest_response
                 .map(|response| response.message)
                 .unwrap_or_else(|| "batch accepted".to_string()),
@@ -186,6 +244,9 @@ pub fn send_spool(
         delivered_events: 0,
         retained_events: lines.len(),
         status_code,
+        transport_attempts: http_attempt.attempts,
+        retry_attempts: http_attempt.retry_attempts,
+        retry_delay_millis: http_attempt.retry_delay.as_millis(),
         message: ingest_response
             .map(|response| response.message)
             .unwrap_or_else(|| "ingest rejected batch".to_string()),
@@ -299,6 +360,108 @@ fn post_json(
     parse_http_response(&response)
 }
 
+fn post_json_with_retry(
+    target: &HttpTarget,
+    bearer_token: Option<&str>,
+    body: &[u8],
+    policy: &RetryPolicy,
+) -> io::Result<HttpAttempt> {
+    let max_attempts = policy.max_attempts.max(1);
+    let mut attempts = 0;
+    let mut retry_delay = Duration::ZERO;
+
+    loop {
+        attempts += 1;
+        match post_json(target, bearer_token, body) {
+            Ok((status_code, response_body)) => {
+                if !is_retryable_status(status_code) || attempts >= max_attempts {
+                    return Ok(HttpAttempt {
+                        status_code,
+                        response_body,
+                        attempts,
+                        retry_attempts: attempts.saturating_sub(1),
+                        retry_delay,
+                    });
+                }
+
+                let ingest_response = serde_json::from_slice::<IngestResponse>(&response_body).ok();
+                let delay = retry_delay_for_attempt(policy, attempts, ingest_response.as_ref());
+                retry_delay += delay;
+                thread::sleep(delay);
+            }
+            Err(error) => {
+                if attempts >= max_attempts {
+                    return Err(error);
+                }
+
+                let delay = retry_delay_for_attempt(policy, attempts, None);
+                retry_delay += delay;
+                thread::sleep(delay);
+            }
+        }
+    }
+}
+
+fn is_retryable_status(status_code: u16) -> bool {
+    status_code == 408 || status_code == 429 || (500..600).contains(&status_code)
+}
+
+fn retry_delay_for_attempt(
+    policy: &RetryPolicy,
+    failed_attempt: usize,
+    ingest_response: Option<&IngestResponse>,
+) -> Duration {
+    if let Some(seconds) = ingest_response.and_then(|response| response.retry_after_seconds) {
+        return clamp_duration(Duration::from_secs(seconds), policy.max_backoff);
+    }
+
+    let backoff = exponential_backoff(policy.initial_backoff, policy.max_backoff, failed_attempt);
+    if policy.jitter {
+        jitter_duration(backoff)
+    } else {
+        backoff
+    }
+}
+
+fn exponential_backoff(initial: Duration, max: Duration, failed_attempt: usize) -> Duration {
+    if initial.is_zero() {
+        return Duration::ZERO;
+    }
+
+    let shift = failed_attempt.saturating_sub(1).min(31) as u32;
+    let multiplier = 1_u32.checked_shl(shift).unwrap_or(u32::MAX);
+    clamp_duration(initial.saturating_mul(multiplier), max)
+}
+
+fn jitter_duration(max_delay: Duration) -> Duration {
+    if max_delay.is_zero() {
+        return Duration::ZERO;
+    }
+
+    let max_millis = max_delay.as_millis();
+    let jitter_millis = pseudo_random_u128() % (max_millis + 1);
+    Duration::from_millis(jitter_millis.min(u64::MAX as u128) as u64)
+}
+
+fn pseudo_random_u128() -> u128 {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let seed = nanos ^ ((std::process::id() as u128) << 32);
+    let mut value = seed ^ (seed << 13);
+    value ^= value >> 7;
+    value ^ (value << 17)
+}
+
+fn clamp_duration(value: Duration, max: Duration) -> Duration {
+    if value > max {
+        max
+    } else {
+        value
+    }
+}
+
 fn parse_http_url(url: &str) -> io::Result<HttpTarget> {
     let without_scheme = url.strip_prefix("http://").ok_or_else(|| {
         io::Error::new(
@@ -393,5 +556,49 @@ mod tests {
         };
 
         assert!(validate_batch(&batch, 10).is_ok());
+    }
+
+    #[test]
+    fn computes_bounded_exponential_backoff() {
+        let initial = Duration::from_secs(2);
+        let max = Duration::from_secs(10);
+
+        assert_eq!(exponential_backoff(initial, max, 1), Duration::from_secs(2));
+        assert_eq!(exponential_backoff(initial, max, 2), Duration::from_secs(4));
+        assert_eq!(
+            exponential_backoff(initial, max, 4),
+            Duration::from_secs(10)
+        );
+    }
+
+    #[test]
+    fn retry_after_hint_is_capped_by_policy() {
+        let policy = RetryPolicy {
+            max_attempts: 4,
+            initial_backoff: Duration::from_secs(1),
+            max_backoff: Duration::from_secs(30),
+            jitter: false,
+        };
+        let response = IngestResponse {
+            accepted: false,
+            accepted_events: 0,
+            message: "retry later".to_string(),
+            retry_after_seconds: Some(60),
+            max_batch_events: Some(100),
+        };
+
+        assert_eq!(
+            retry_delay_for_attempt(&policy, 1, Some(&response)),
+            Duration::from_secs(30)
+        );
+    }
+
+    #[test]
+    fn classifies_transient_http_statuses() {
+        assert!(is_retryable_status(408));
+        assert!(is_retryable_status(429));
+        assert!(is_retryable_status(503));
+        assert!(!is_retryable_status(400));
+        assert!(!is_retryable_status(202));
     }
 }

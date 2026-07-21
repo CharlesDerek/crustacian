@@ -71,7 +71,8 @@ Classification examples:
 1. Local spool: write validated NDJSON locally.
 2. Built-in HTTP transport: batch events to `crustacian-ingest`.
 3. Authenticated delivery: optional bearer-token header for the built-in sender.
-4. Reliability controls: retain failed batches and record server backpressure.
+4. Reliability controls: retry transient delivery failures with exponential
+   backoff and jitter, retain failed batches, and record server backpressure.
 5. Parser packs: publish field mappings for target SIEMs.
 
 The current built-in sender supports `http://` ingest URLs for local labs and
@@ -83,6 +84,11 @@ The endpoint sender reads:
 
 - `CRUSTACIAN_INGEST_URL`
 - `CRUSTACIAN_INGEST_TOKEN`
+
+The built-in sender retries transient transport failures, HTTP `408`, HTTP
+`429`, and HTTP `5xx` responses. The default policy makes up to four delivery
+attempts with bounded exponential backoff, full jitter, and a 30-second cap.
+Server `retry_after_seconds` hints are honored up to that cap.
 
 The dry-run action still does not open a network connection. Explicit spool
 shipping from the EDR preview menu does.
@@ -123,6 +129,9 @@ When the server reaches `--max-in-flight`, it returns:
 
 The endpoint keeps the original events in `siem-spool.ndjson` and records a
 `transport.backpressure` event so operators can see that delivery was delayed.
+The endpoint retries the same batch before returning control to the operator;
+the CLI reports transport attempts, retry attempts, and accumulated retry
+delay.
 
 ## authentik and LDAP Response Stages
 
