@@ -1,0 +1,78 @@
+name: Server Ingest
+
+on:
+  pull_request:
+    paths:
+      - "server/**"
+      - "schemas/**"
+      - ".github/workflows/server-ingest.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "server/**"
+      - "schemas/**"
+      - ".github/workflows/server-ingest.yml"
+
+jobs:
+  server-checks:
+    name: Server ingest checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect server project
+        id: server
+        shell: bash
+        run: |
+          if [ -f server/package.json ]; then
+            echo "kind=node" >> "$GITHUB_OUTPUT"
+          elif [ -f server/pyproject.toml ]; then
+            echo "kind=python" >> "$GITHUB_OUTPUT"
+          elif [ -f server/Cargo.toml ]; then
+            echo "kind=rust" >> "$GITHUB_OUTPUT"
+          elif [ -f server/Dockerfile ]; then
+            echo "kind=docker" >> "$GITHUB_OUTPUT"
+          else
+            echo "kind=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Node checks
+        if: steps.server.outputs.kind == 'node'
+        working-directory: server
+        run: |
+          npm ci
+          npm test
+
+      - name: Python checks
+        if: steps.server.outputs.kind == 'python'
+        working-directory: server
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install .[dev]
+          python -m pytest
+
+      - name: Rust checks
+        if: steps.server.outputs.kind == 'rust'
+        working-directory: server
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup component add rustfmt clippy
+          cargo fmt --all -- --check
+          cargo clippy --all-targets -- -D warnings
+          cargo test --locked
+
+      - name: Container build
+        if: steps.server.outputs.kind == 'docker'
+        run: docker build -t crustacian-ingest:test server
+
+      - name: Validate schemas
+        if: hashFiles('schemas/**/*.json') != ''
+        run: |
+          find schemas -name '*.json' -print0 | xargs -0 -n 1 python -m json.tool >/dev/null
+
+      - name: Skip missing server project
+        if: steps.server.outputs.kind == ''
+        run: echo "No server project found yet; skipping server ingest checks."

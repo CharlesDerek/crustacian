@@ -1,0 +1,65 @@
+name: Endpoint Agent
+
+on:
+  pull_request:
+    paths:
+      - "endpoint/**"
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/endpoint-agent.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "endpoint/**"
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/endpoint-agent.yml"
+
+jobs:
+  rust-checks:
+    name: Rust endpoint checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect endpoint crate
+        id: crate
+        shell: bash
+        run: |
+          if [ -f endpoint/Cargo.toml ]; then
+            echo "manifest=endpoint/Cargo.toml" >> "$GITHUB_OUTPUT"
+          elif [ -f Cargo.toml ]; then
+            echo "manifest=Cargo.toml" >> "$GITHUB_OUTPUT"
+          else
+            echo "manifest=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install Rust
+        if: steps.crate.outputs.manifest != ''
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Check formatting
+        if: steps.crate.outputs.manifest != ''
+        run: cargo fmt --manifest-path "${{ steps.crate.outputs.manifest }}" --all -- --check
+
+      - name: Lint
+        if: steps.crate.outputs.manifest != ''
+        run: cargo clippy --manifest-path "${{ steps.crate.outputs.manifest }}" --all-targets -- -D warnings
+
+      - name: Test
+        if: steps.crate.outputs.manifest != ''
+        run: cargo test --manifest-path "${{ steps.crate.outputs.manifest }}" --locked
+
+      - name: Build release binary
+        if: steps.crate.outputs.manifest != ''
+        run: cargo build --manifest-path "${{ steps.crate.outputs.manifest }}" --release --locked
+
+      - name: Skip missing endpoint crate
+        if: steps.crate.outputs.manifest == ''
+        run: echo "No endpoint Cargo manifest found yet; skipping endpoint checks."

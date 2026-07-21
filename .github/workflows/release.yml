@@ -1,0 +1,48 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release-artifacts:
+    name: Build release artifacts
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect endpoint crate
+        id: crate
+        shell: bash
+        run: |
+          if [ -f endpoint/Cargo.toml ]; then
+            echo "manifest=endpoint/Cargo.toml" >> "$GITHUB_OUTPUT"
+          elif [ -f Cargo.toml ]; then
+            echo "manifest=Cargo.toml" >> "$GITHUB_OUTPUT"
+          else
+            echo "manifest=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install Rust
+        if: steps.crate.outputs.manifest != ''
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release binary
+        if: steps.crate.outputs.manifest != ''
+        run: cargo build --manifest-path "${{ steps.crate.outputs.manifest }}" --release --locked
+
+      - name: Package static site
+        run: |
+          tar -czf crustacian-site.tar.gz index.html ReadMe.md assets CNAME LICENSE
+          sha256sum crustacian-site.tar.gz > crustacian-site.tar.gz.sha256
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            crustacian-site.tar.gz
+            crustacian-site.tar.gz.sha256

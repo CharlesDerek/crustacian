@@ -103,6 +103,8 @@
             <ul class="navbar-nav">
                 <li class="nav-item"><a class="nav-link" href="#about">About</a></li>
                 <li class="nav-item"><a class="nav-link" href="#features">Features</a></li>
+                <li class="nav-item"><a class="nav-link" href="#integrations">Integrations</a></li>
+                <li class="nav-item"><a class="nav-link" href="#platform">Server Side</a></li>
                 <li class="nav-item"><a class="nav-link" href="#usage">Usage</a></li>
                 <li class="nav-item">
                     <a class="btn btn-outline-light btn-sm ms-lg-3" href="https://github.com/CharlesDerek/crustacian" target="_blank" rel="noopener">
@@ -129,9 +131,10 @@
                 </h1>
                 <p class="hero-subtitle mb-4">
                     Crustacian is shifting from a local antivirus helper into an
-                    endpoint security toolkit: ClamAV lifecycle management, repeatable
-                    scans, local evidence capture, SIEM-ready telemetry, and safe
-                    response-planning stages for security teams.
+                    endpoint security toolkit: ClamAV lifecycle management,
+                    repeatable scans, local evidence capture, EDR telemetry,
+                    server-side ingest, and safe response-planning stages for
+                    security teams.
                 </p>
                 <div class="d-flex flex-wrap gap-2 mb-4">
                     <a href="https://github.com/CharlesDerek/crustacian" target="_blank" rel="noopener"
@@ -158,11 +161,14 @@
                             <li>✅ Quick, full, and custom path scans</li>
                             <li>✅ Local scan evidence, throughput, and ETA</li>
                             <li>✅ SIEM-ready telemetry and EDR R&D planning artifacts</li>
+                            <li>✅ Proposed ingest, backpressure, and CI/CD lanes</li>
                         </ul>
                         <div class="small text-secondary">
                             Built for lab environments, managed endpoints, SOC
                             workflows, and security research where transparent local
-                            evidence matters before enforcement is enabled.
+                            evidence matters before enforcement is enabled. Server-side
+                            ingestion and response connectors are planned as separate,
+                            auditable components.
                         </div>
                     </div>
                 </div>
@@ -263,6 +269,178 @@
                             Generate NDJSON events, endpoint snapshots, SHA-256
                             evidence hashes, and disabled response plans for SIEM,
                             authentik, LDAP, and containment research.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section id="integrations" class="section">
+    <div class="container">
+        <div class="row g-4 align-items-start">
+            <div class="col-lg-5">
+                <h2 class="h3 mb-3">EDR + AV integration plan</h2>
+                <p class="text-secondary">
+                    Crustacian can become a combined antivirus endpoint and EDR
+                    telemetry agent by separating detection, evidence collection,
+                    transport, and response control. ClamAV remains the AV engine;
+                    Crustacian owns orchestration, local event normalization, and
+                    fleet-safe delivery.
+                </p>
+                <p class="text-secondary mb-0">
+                    The integrations below are intentionally staged. They enable
+                    visibility first, dry-run response second, and approval-gated
+                    containment only after audit trails and rollback behavior are
+                    proven.
+                </p>
+            </div>
+            <div class="col-lg-7">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h3 class="card-title h6">Endpoint AV</h3>
+                                <p class="card-text small text-secondary">
+                                    Manage ClamAV and FreshClam lifecycle, signature
+                                    health, scan policy, quarantine metadata, and
+                                    infection evidence hashes from one local agent.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h3 class="card-title h6">Endpoint Detection</h3>
+                                <p class="card-text small text-secondary">
+                                    Spool normalized file, process, scan, policy,
+                                    and integrity events as NDJSON with stable
+                                    endpoint IDs and monotonic sequence numbers.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h3 class="card-title h6">SIEM/SOAR Delivery</h3>
+                                <p class="card-text small text-secondary">
+                                    Ship events to syslog, OpenSearch, Splunk HEC,
+                                    Elastic, Sentinel-compatible collectors, or
+                                    webhook receivers through pluggable exporters.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h3 class="card-title h6">Response Connectors</h3>
+                                <p class="card-text small text-secondary">
+                                    Keep host isolation, authentik/LDAP actions,
+                                    ticket creation, and quarantine workflows in
+                                    dry-run mode until policy approval is explicit.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section id="platform" class="section bg-dark">
+    <div class="container">
+        <h2 class="h3 mb-4 text-center">Server-side ingest and telemetry</h2>
+        <div class="row g-4">
+            <div class="col-lg-4">
+                <div class="card h-100">
+                    <div class="card-body">
+                        <h3 class="card-title h5">Ingest API</h3>
+                        <p class="card-text small text-secondary">
+                            A dedicated receiver should accept signed batches over
+                            mTLS or token-authenticated HTTPS, validate schema
+                            versions, deduplicate by endpoint sequence, and return
+                            precise retry hints.
+                        </p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-4">
+                <div class="card h-100">
+                    <div class="card-body">
+                        <h3 class="card-title h5">Telemetry Pipeline</h3>
+                        <p class="card-text small text-secondary">
+                            Server workers normalize events into hot storage,
+                            object archives, alert queues, and SIEM outputs while
+                            preserving raw endpoint evidence for forensic review.
+                        </p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-4">
+                <div class="card h-100">
+                    <div class="card-body">
+                        <h3 class="card-title h5">Backpressure</h3>
+                        <p class="card-text small text-secondary">
+                            Endpoints should use bounded local spools, exponential
+                            retry, priority lanes for detections, server rate-limit
+                            headers, and drop-safe summaries when collectors lag.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="mt-4">
+            <pre><code>endpoint agent
+  -> local spool
+  -> batch sender with retry and rate-limit handling
+  -> ingest API
+  -> validation queue
+  -> telemetry store + SIEM exporters + response review queue</code></pre>
+        </div>
+    </div>
+</section>
+
+<section id="delivery" class="section">
+    <div class="container">
+        <h2 class="h3 mb-4 text-center">CI/CD lanes</h2>
+        <div class="row g-4">
+            <div class="col-md-4">
+                <div class="card h-100">
+                    <div class="card-body">
+                        <h3 class="card-title h5">Endpoint Agent</h3>
+                        <p class="card-text small text-secondary">
+                            Format, lint, test, audit dependencies, build
+                            cross-platform binaries, sign release artifacts, and
+                            publish checksums for managed deployment systems.
+                        </p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card h-100">
+                    <div class="card-body">
+                        <h3 class="card-title h5">Server Ingest</h3>
+                        <p class="card-text small text-secondary">
+                            Run API tests, schema compatibility checks, container
+                            builds, image scans, migration tests, and environment
+                            promotion gates before deployment.
+                        </p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card h-100">
+                    <div class="card-body">
+                        <h3 class="card-title h5">Site and Docs</h3>
+                        <p class="card-text small text-secondary">
+                            Validate static content and publish architecture docs,
+                            schemas, runbooks, and release notes alongside endpoint
+                            and server artifacts.
                         </p>
                     </div>
                 </div>

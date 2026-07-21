@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crustacian.org/schemas/endpoint-event.schema.json",
+  "title": "Crustacian Endpoint Event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_id",
+    "endpoint_id",
+    "sequence",
+    "event_type",
+    "severity",
+    "observed_at",
+    "payload"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "event_id": {
+      "type": "string",
+      "minLength": 12,
+      "description": "Globally unique event identifier."
+    },
+    "endpoint_id": {
+      "type": "string",
+      "minLength": 6,
+      "description": "Stable endpoint identity assigned during enrollment."
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Monotonic per-endpoint event sequence for deduplication."
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "agent.health",
+        "clamav.signature_update",
+        "scan.started",
+        "scan.completed",
+        "detection.malware",
+        "file.quarantine_planned",
+        "response.plan_created",
+        "transport.backpressure"
+      ]
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["debug", "info", "low", "medium", "high", "critical"]
+    },
+    "observed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "crustacian"
+        },
+        "version": {
+          "type": "string"
+        },
+        "platform": {
+          "type": "string"
+        }
+      }
+    },
+    "payload": {
+      "type": "object",
+      "description": "Event-type-specific normalized telemetry."
+    }
+  }
+}

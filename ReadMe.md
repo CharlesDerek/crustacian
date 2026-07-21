@@ -20,6 +20,7 @@ It provides a consistent, secure, and predictable interface for:
 * Viewing detailed results with throughput, progress, and ETA metrics
 * Exporting structured logs for integration into SIEM/SOAR/automation pipelines
 * Generating endpoint telemetry, snapshot hashes, and disabled response plans for EDR R&D
+* Planning server-side ingest, telemetry storage, backpressure, and CI/CD lanes for endpoint and server components
 
 Crustacian is designed for **developers, sysadmins, SOC teams, blue-team operators, and enterprise environments** where endpoint consistency, evidence capture, and controlled automation matter.
 
@@ -36,6 +37,10 @@ Crustacian is designed for **developers, sysadmins, SOC teams, blue-team operato
 | **Live Metrics**            | Progress %, files/sec, ETA, infected count, skipped files               |
 | **Structured Logging**      | JSON + human-readable summary logs for automation systems               |
 | **Endpoint R&D Telemetry**  | Local NDJSON event spool, endpoint snapshots, and response plan drafts  |
+| **EDR + AV Integrations**   | Proposed endpoint, SIEM/SOAR, identity, and containment connectors      |
+| **Server-Side Ingest**      | Planned telemetry receiver, validation queue, storage, and exporters    |
+| **Backpressure Controls**   | Planned local spool, retry, rate-limit, and priority delivery behavior  |
+| **CI/CD Separation**        | Endpoint, server, docs, and release workflow lanes                      |
 | **Config Management**       | Auto-generates safe default ClamAV and FreshClam configs                |
 | **Extensible Architecture** | Designed for future modules (scheduling, remote scanning, local agents) |
 
@@ -66,33 +71,42 @@ cd crustacian
 cargo build --release
 ```
 
-The optimized binary will appear at:
+The optimized binaries will appear at:
 
 ```
-target/release/crustacian
+target/release/crustacian-endpoint
+target/release/crustacian-server
 ```
 
-(Windows: `crustacian.exe`)
+(Windows: `.exe` suffix)
 
 ---
 
 ## 🧪 Usage
 
-### **Start the interactive CLI**
+### **Start the ingest server**
 
 ```bash
-./crustacian
+cargo run -p crustacian-server -- --bind 127.0.0.1:8080
 ```
 
-You’ll see a menu similar to:
+### **Emit and send endpoint telemetry**
 
+In another terminal:
+
+```bash
+cargo run -p crustacian-endpoint -- \
+  --endpoint-id lab-endpoint-01 \
+  run-once \
+  --ingest-url http://127.0.0.1:8080
 ```
-==================== Crustacian CLI ====================
-1. Initialize / repair ClamAV environment
-2. Run a scan (quick / full / custom)
-3. View previous scan results
-4. Endpoint EDR R&D preview
-5. Exit
+
+### **Inspect local spool status**
+
+```bash
+cargo run -p crustacian-endpoint -- \
+  --endpoint-id lab-endpoint-01 \
+  status
 ```
 
 ### **Running a scan directly (non-interactive)**
@@ -112,14 +126,13 @@ crustacian scan --full
 ```
 crustacian/
 │
-├── src/
-│   ├── main.rs          # CLI entrypoint
-│   ├── cli/             # Menus, argument parsing, UX
-│   ├── platform/        # OS-specific ClamAV helpers
-│   ├── scan/            # Scanner logic + metrics
-│   └── logs/            # Logging utilities (structured output)
-│
-├── docs/                # Additional developer docs
+├── crates/
+│   └── crustacian-core/ # Shared telemetry models and ingest contracts
+├── endpoint/            # Endpoint agent: local spool and ingest sender
+├── server/              # Server-side ingest API and backpressure responses
+├── schemas/             # Versioned JSON schemas for events and batches
+├── docs/                # Integration and developer docs
+├── .github/workflows/   # Endpoint, server, docs, and release CI lanes
 └── README.md
 ```
 
@@ -129,20 +142,23 @@ crustacian/
 
 Crustacian separates responsibilities into simple, testable modules:
 
-* **Platform Layer**
+* **Platform Layer** *(planned endpoint expansion)*
   Detects OS, locates ClamAV binaries, validates config paths.
 
-* **Signature Layer**
+* **Signature Layer** *(planned endpoint expansion)*
   Runs FreshClam, tracks update timestamps, and handles update failures.
 
-* **Scan Engine Layer**
+* **Scan Engine Layer** *(planned endpoint expansion)*
   Executes scans, tracks throughput, calculates ETA using adaptive models.
 
 * **Logging & Output Layer**
   Stores results in both human-readable and structured JSON formats.
 
-* **CLI Layer**
-  Provides interactive and upcoming non-interactive interfaces.
+* **Endpoint Agent**
+  Emits local health telemetry, maintains an NDJSON spool, and sends batches to the ingest API with retry-aware responses.
+
+* **Server Ingest Layer**
+  Accepts telemetry batches, validates schema versions, deduplicates by endpoint sequence, and returns backpressure hints.
 
 This modular approach ensures Crustacian can be embedded into:
 
@@ -152,6 +168,102 @@ This modular approach ensures Crustacian can be embedded into:
 * Custom security tooling
 * Endpoint agent frameworks
 * Local-first EDR research pipelines
+
+---
+
+## 🔌 EDR + AV Integration Architecture
+
+Crustacian should treat the endpoint as the source of local evidence and the server as the control point for fleet visibility. The split keeps endpoint behavior auditable while enabling EDR-style correlation and response workflows.
+
+### Endpoint AV layer
+
+* Manage ClamAV and FreshClam installation, configuration, signature freshness, and scan policy
+* Run quick, full, and targeted scans
+* Record infection findings, quarantine metadata, file hashes, scan timing, skipped files, and engine versions
+* Keep destructive actions disabled unless explicit policy and rollback behavior exist
+
+### Endpoint EDR layer
+
+* Emit normalized NDJSON events for scan results, file evidence, process context, policy decisions, endpoint health, and agent status
+* Assign a stable endpoint ID and monotonic sequence numbers to support deduplication
+* Maintain a bounded local spool for offline operation and delayed delivery
+* Add dry-run response plans for identity actions, network containment, ticket creation, and quarantine workflows
+
+### External integrations
+
+| Integration                 | Purpose                                                        | Initial Mode |
+| --------------------------- | -------------------------------------------------------------- | ------------ |
+| **Syslog / OpenSearch**     | Vendor-neutral telemetry forwarding                            | Write events |
+| **Splunk HEC / Elastic**    | SIEM search, detection engineering, dashboards, and alerting    | Write events |
+| **Microsoft Sentinel**      | Cloud SIEM ingestion through compatible collectors or webhooks  | Write events |
+| **SOAR webhooks**           | Case creation and response review queues                       | Dry-run first |
+| **authentik / LDAP**        | Identity lookup and account-response planning                  | Dry-run first |
+| **YARA**                    | Additional local detection rules before or after AV scanning    | Detection only |
+| **Ticketing systems**       | Evidence-backed incident handoff                               | Draft/create |
+
+---
+
+## 🛰️ Server-Side Ingest and Telemetry
+
+The server-side segment should be separate from the endpoint agent and optimized for reliable intake, schema validation, storage, and downstream export.
+
+```text
+endpoint agent
+  -> local spool
+  -> batch sender with retry and rate-limit handling
+  -> ingest API
+  -> validation queue
+  -> telemetry store
+  -> SIEM exporters + alert queue + response review queue
+```
+
+### Ingest API
+
+* Accept signed event batches over mTLS or token-authenticated HTTPS
+* Validate event schema versions and reject unknown or malformed payloads
+* Deduplicate by endpoint ID, sequence number, and event hash
+* Return retry hints, accepted offsets, and rate-limit headers
+
+### Telemetry pipeline
+
+* Store raw events for forensic review
+* Normalize hot events into searchable storage
+* Route detection events to alert queues
+* Export selected telemetry to SIEM/SOAR integrations
+* Track endpoint health, missed check-ins, signature age, and failed delivery attempts
+
+### Backpressure strategy
+
+* Use a bounded endpoint spool with disk limits and explicit retention policy
+* Prioritize detections, infection evidence, and endpoint health over low-value progress events
+* Apply exponential retry with jitter for network or server failures
+* Honor server rate-limit headers and reduce batch size when requested
+* Emit roll-up summaries when low-priority events must be dropped
+* Keep server workers queue-backed so ingest remains fast even when exporters are slow
+
+---
+
+## ⚙️ CI/CD Plan
+
+Crustacian should use separate CI/CD lanes for each side of the system. The repository now includes placeholder GitHub Actions workflows that activate when matching component paths exist, plus initial ingest contracts in [`schemas/`](schemas/) and an integration guide in [`docs/integrations.md`](docs/integrations.md).
+
+| Lane                      | Checks                                                                 |
+| ------------------------- | ---------------------------------------------------------------------- |
+| **Endpoint agent**        | `cargo fmt`, `cargo clippy`, tests, dependency audit, release builds   |
+| **Server ingest**         | API tests, schema compatibility checks, container build, image scan    |
+| **Docs/site**             | Static HTML checks and architecture documentation validation           |
+| **Release**               | Cross-platform endpoint artifacts, checksums, signed release packages  |
+
+Suggested future layout:
+
+```text
+crustacian/
+├── endpoint/              # Rust endpoint agent or workspace crate
+├── server/                # Ingest API, workers, schemas, deployment assets
+├── schemas/               # Versioned event and API schemas
+├── docs/                  # Architecture, runbooks, deployment notes
+└── .github/workflows/     # Endpoint, server, docs, and release automation
+```
 
 ---
 
@@ -182,6 +294,8 @@ Upcoming milestones include:
 * Enhanced logging (CSV, NDJSON, syslog integration)
 * SIEM-ready endpoint event schema validation
 * Dry-run SIEM/authentik/LDAP/containment readiness checks
+* Initial event schema files for endpoint and server ingest contracts
+* GitHub Actions validation for static site and documentation
 
 ### **Medium Term**
 
@@ -190,6 +304,8 @@ Upcoming milestones include:
 * Remote-report mode (print-only vs write-to-log modes)
 * Optional SIEM transport with authenticated delivery and retry queue
 * authentik/LDAP response connector in dry-run mode
+* Server ingest API with queue-backed telemetry validation
+* Endpoint spool with bounded retry and backpressure handling
 
 ### **Long Term**
 
@@ -198,6 +314,7 @@ Upcoming milestones include:
 * Optional sandboxing for file pre-processing before scan
 * Pluggable detection layers (YARA support, heuristic pre-checks)
 * Reversible, approval-gated containment workflows for managed fleets
+* Release signing, SBOM generation, and fleet deployment artifacts
 
 ---
 

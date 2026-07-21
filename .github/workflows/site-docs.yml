@@ -1,0 +1,33 @@
+name: Site and Docs
+
+on:
+  pull_request:
+    paths:
+      - "index.html"
+      - "ReadMe.md"
+      - "docs/**"
+      - ".github/workflows/site-docs.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "index.html"
+      - "ReadMe.md"
+      - "docs/**"
+      - ".github/workflows/site-docs.yml"
+
+jobs:
+  static-content:
+    name: Static content checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate HTML can be parsed
+        run: python -c "from html.parser import HTMLParser; HTMLParser().feed(open('index.html', encoding='utf-8').read())"
+
+      - name: Check docs references
+        run: |
+          test -f ReadMe.md
+          test -f index.html
