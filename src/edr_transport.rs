@@ -556,7 +556,7 @@ fn post_json_https(
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
-        .map_err(|error| io::Error::new(io::ErrorKind::Other, error))?;
+        .map_err(io::Error::other)?;
     let mut request = client
         .post(&target.url)
         .header(reqwest::header::CONTENT_TYPE, "application/json")
@@ -566,14 +566,9 @@ fn post_json_https(
         request = request.bearer_auth(token);
     }
 
-    let response = request
-        .send()
-        .map_err(|error| io::Error::new(io::ErrorKind::Other, error))?;
+    let response = request.send().map_err(io::Error::other)?;
     let status_code = response.status().as_u16();
-    let response_body = response
-        .bytes()
-        .map_err(|error| io::Error::new(io::ErrorKind::Other, error))?
-        .to_vec();
+    let response_body = response.bytes().map_err(io::Error::other)?.to_vec();
 
     Ok((status_code, response_body))
 }
