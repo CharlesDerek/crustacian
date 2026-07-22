@@ -1,0 +1,29 @@
+name: Docs and Site
+
+on:
+  push:
+    paths:
+      - "ReadMe.md"
+      - "docs/**"
+      - "schemas/**"
+      - "index.html"
+      - ".github/workflows/docs-site.yml"
+  pull_request:
+    paths:
+      - "ReadMe.md"
+      - "docs/**"
+      - "schemas/**"
+      - "index.html"
+      - ".github/workflows/docs-site.yml"
+
+jobs:
+  docs-site:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse static HTML
+        run: python -c "from html.parser import HTMLParser; HTMLParser().feed(open('index.html', encoding='utf-8').read())"
+
+      - name: Validate JSON schemas
+        run: find schemas -name '*.json' -print0 | xargs -0 -n 1 python -m json.tool >/dev/null

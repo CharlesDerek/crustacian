@@ -1,0 +1,43 @@
+name: Endpoint AV and EDR
+
+on:
+  push:
+    paths:
+      - "src/main.rs"
+      - "src/lib.rs"
+      - "src/edr_transport.rs"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/endpoint.yml"
+  pull_request:
+    paths:
+      - "src/main.rs"
+      - "src/lib.rs"
+      - "src/edr_transport.rs"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/endpoint.yml"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  endpoint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust components
+        run: rustup component add rustfmt clippy
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Lint endpoint binary
+        run: cargo clippy --locked --bin crustacian -- -D warnings
+
+      - name: Test endpoint and shared transport
+        run: cargo test --locked --bin crustacian --lib
+
+      - name: Build endpoint release binary
+        run: cargo build --locked --release --bin crustacian

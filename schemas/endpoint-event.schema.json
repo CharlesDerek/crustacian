@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crustacian.org/schemas/endpoint-event.schema.json",
+  "title": "Crustacian Endpoint Telemetry Event",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "event_id",
+    "timestamp",
+    "endpoint_id",
+    "asset_hostname",
+    "platform",
+    "event_kind",
+    "severity",
+    "classifier",
+    "confidence",
+    "actor",
+    "auth_provider",
+    "lockout_recommended",
+    "isolation_recommended",
+    "forensic_snapshot_sha256",
+    "evidence"
+  ],
+  "properties": {
+    "schema_version": { "const": "crustacian.endpoint.telemetry.v0" },
+    "event_id": { "type": "string", "minLength": 8 },
+    "timestamp": { "type": "string" },
+    "endpoint_id": { "type": "string", "minLength": 3 },
+    "asset_hostname": { "type": "string" },
+    "platform": { "type": "string" },
+    "event_kind": { "type": "string" },
+    "severity": { "type": "string" },
+    "classifier": { "type": "string" },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "actor": { "type": "string" },
+    "auth_provider": { "type": "string" },
+    "lockout_recommended": { "type": "boolean" },
+    "isolation_recommended": { "type": "boolean" },
+    "forensic_snapshot_sha256": { "type": "string" },
+    "evidence": { "type": "string" }
+  }
+}

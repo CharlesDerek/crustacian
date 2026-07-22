@@ -1,0 +1,45 @@
+name: Ingest Server
+
+on:
+  push:
+    paths:
+      - "src/bin/crustacian-ingest.rs"
+      - "src/lib.rs"
+      - "src/edr_transport.rs"
+      - "schemas/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/ingest-server.yml"
+  pull_request:
+    paths:
+      - "src/bin/crustacian-ingest.rs"
+      - "src/lib.rs"
+      - "src/edr_transport.rs"
+      - "schemas/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/ingest-server.yml"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust components
+        run: rustup component add rustfmt clippy
+
+      - name: Lint ingest server
+        run: cargo clippy --locked --bin crustacian-ingest -- -D warnings
+
+      - name: Test shared ingest contracts
+        run: cargo test --locked --lib
+
+      - name: Build ingest release binary
+        run: cargo build --locked --release --bin crustacian-ingest
+
+      - name: Validate JSON schemas
+        run: find schemas -name '*.json' -print0 | xargs -0 -n 1 python -m json.tool >/dev/null

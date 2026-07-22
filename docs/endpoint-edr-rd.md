@@ -3,7 +3,8 @@
 This document defines the initial research and development shape for expanding
 Crustacian from a local ClamAV driver into a lightweight endpoint telemetry and
 response agent. The current implementation is intentionally non-destructive:
-it writes local telemetry, snapshots, and disabled response plans only.
+it writes local telemetry, snapshots, disabled response plans, and optionally
+ships telemetry to a Crustacian ingest server.
 
 ## Goals
 
@@ -24,6 +25,8 @@ The CLI exposes `Endpoint EDR R&D preview` with three safe actions:
 - Generate a disabled response plan for security-team review.
 - Run a first-stage integration dry run for SIEM, authentik, LDAP, and
   containment readiness.
+- Show the local telemetry spool status.
+- Ship the telemetry spool to `crustacian-ingest`.
 
 Scan completion also writes `endpoint_event.ndjson` in the scan report directory
 and appends the same event to the local SIEM spool:
@@ -65,21 +68,77 @@ Classification examples:
 
 ## SIEM Integration Stages
 
-1. Local spool only: write validated NDJSON locally.
-2. Transport abstraction: add HTTPS/syslog output interfaces.
-3. Authenticated delivery: add bearer-token or mTLS support.
-4. Reliability controls: retry queue, backoff, disk cap, and dead-letter files.
+1. Local spool: write validated NDJSON locally.
+2. Built-in HTTP/HTTPS transport: batch events to `crustacian-ingest`.
+3. Authenticated delivery: optional bearer-token header for the built-in sender.
+4. Reliability controls: retry transient delivery failures with exponential
+   backoff and jitter, retain failed batches, and record server backpressure.
 5. Parser packs: publish field mappings for target SIEMs.
 
-No SIEM network delivery is active in the current code.
+The current built-in sender supports `http://` ingest URLs for local labs and
+`https://` ingest URLs for deployments with TLS termination in front of the
+ingest server. Native mTLS is not implemented yet.
 
-Stage-one SIEM readiness checks read these environment variables only to decide
-whether a sender could be configured later:
+The endpoint sender reads:
 
-- `CRUSTACIAN_SIEM_URL`
-- `CRUSTACIAN_SIEM_TOKEN`
+- `CRUSTACIAN_INGEST_URL`
+- `CRUSTACIAN_INGEST_TOKEN`
 
-The dry run does not open a network connection.
+The built-in sender retries transient transport failures, HTTP `408`, HTTP
+`429`, and HTTP `5xx` responses. The default policy makes up to four delivery
+attempts with bounded exponential backoff, full jitter, and a 30-second cap.
+Server `retry_after_seconds` hints are honored up to that cap.
+
+The interactive EDR preview menu uses durable retry scheduling. When a delivery
+attempt fails or the ingest server remains overloaded, the endpoint writes the
+next allowed attempt to `siem-spool-retry.json` beside the local telemetry spool.
+If an operator tries to ship again before that time, the CLI reports the retained
+events and returns immediately instead of sleeping inside the menu.
+
+The dry-run action still does not open a network connection. Explicit spool
+shipping from the EDR preview menu does.
+
+## Server-Side Ingest
+
+The `crustacian-ingest` binary provides the first server-side segment:
+
+- `GET /health`
+- `POST /v1/ingest`
+- batch schema validation
+- required endpoint event field validation
+- NDJSON persistence under the configured data directory
+- active-request backpressure using HTTP `429`
+
+Run locally:
+
+```bash
+cargo run --bin crustacian-ingest -- \
+  --bind 127.0.0.1:8080 \
+  --data-dir target/crustacian-ingest
+```
+
+Then use the endpoint EDR preview menu to ship the local spool to:
+
+```text
+http://127.0.0.1:8080/v1/ingest
+https://ingest.example.com/v1/ingest
+```
+
+## Backpressure Behavior
+
+When the server reaches `--max-in-flight`, it returns:
+
+- HTTP `429`
+- `retry_after_seconds`
+- `max_batch_events`
+- `accepted: false`
+
+The endpoint keeps the original events in `siem-spool.ndjson` and records a
+`transport.backpressure` event so operators can see that delivery was delayed.
+The reusable transport layer can retry a batch in process, while the interactive
+menu uses the durable retry file so backoff can survive CLI exits. The CLI
+reports transport attempts, retry attempts, accumulated retry delay, and the
+next retry time when delivery is deferred.
 
 ## authentik and LDAP Response Stages
 
