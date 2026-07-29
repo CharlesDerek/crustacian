@@ -17,6 +17,7 @@ struct ServerConfig {
     max_batch_events: usize,
     max_in_flight: usize,
     retry_after_seconds: u64,
+    bearer_token: Option<String>,
 }
 
 fn main() -> io::Result<()> {
@@ -57,6 +58,9 @@ fn parse_args() -> ServerConfig {
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(10);
+    let mut bearer_token = env::var("CRUSTACIAN_INGEST_TOKEN")
+        .ok()
+        .and_then(non_empty_string);
 
     let mut args = env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -81,6 +85,9 @@ fn parse_args() -> ServerConfig {
                     .and_then(|value| value.parse().ok())
                     .unwrap_or(retry_after_seconds);
             }
+            "--bearer-token" => {
+                bearer_token = args.next().and_then(non_empty_string);
+            }
             _ => {}
         }
     }
@@ -91,6 +98,7 @@ fn parse_args() -> ServerConfig {
         max_batch_events,
         max_in_flight,
         retry_after_seconds,
+        bearer_token,
     }
 }
 
@@ -138,6 +146,17 @@ fn handle_connection(
         return write_json_response(&mut stream, 404, &response);
     }
 
+    if !authorized_ingest_request(&request_text, config.bearer_token.as_deref()) {
+        let response = IngestResponse {
+            accepted: false,
+            accepted_events: 0,
+            message: "missing or invalid bearer token".to_string(),
+            retry_after_seconds: None,
+            max_batch_events: Some(config.max_batch_events),
+        };
+        return write_json_response(&mut stream, 401, &response);
+    }
+
     let body = split_http_body(&request)?;
     let batch = match serde_json::from_slice::<IngestBatch>(body) {
         Ok(batch) => batch,
@@ -173,6 +192,57 @@ fn handle_connection(
         max_batch_events: Some(config.max_batch_events),
     };
     write_json_response(&mut stream, 202, &response)
+}
+
+fn non_empty_string(value: String) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn authorized_ingest_request(request_text: &str, expected_token: Option<&str>) -> bool {
+    let Some(expected_token) = expected_token.filter(|token| !token.trim().is_empty()) else {
+        return true;
+    };
+
+    bearer_token_from_request(request_text)
+        .map(|actual_token| constant_time_eq(actual_token.as_bytes(), expected_token.as_bytes()))
+        .unwrap_or(false)
+}
+
+fn bearer_token_from_request(request_text: &str) -> Option<&str> {
+    let headers = request_text
+        .split("\r\n\r\n")
+        .next()
+        .unwrap_or(request_text);
+    headers.lines().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        if !name.eq_ignore_ascii_case("authorization") {
+            return None;
+        }
+
+        let value = value.trim();
+        let (scheme, token) = value.split_once(' ')?;
+        if scheme.eq_ignore_ascii_case("bearer") && !token.trim().is_empty() {
+            Some(token.trim())
+        } else {
+            None
+        }
+    })
+}
+
+fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    let max_len = left.len().max(right.len());
+    let mut diff = left.len() ^ right.len();
+    for index in 0..max_len {
+        let left_byte = left.get(index).copied().unwrap_or(0);
+        let right_byte = right.get(index).copied().unwrap_or(0);
+        diff |= usize::from(left_byte ^ right_byte);
+    }
+    diff == 0
 }
 
 fn split_http_body(request: &[u8]) -> io::Result<&[u8]> {
@@ -231,6 +301,7 @@ fn write_json_response<T: serde::Serialize>(
     let reason = match status_code {
         200 => "OK",
         202 => "Accepted",
+        401 => "Unauthorized",
         400 => "Bad Request",
         404 => "Not Found",
         429 => "Too Many Requests",
@@ -258,5 +329,81 @@ impl InFlightGuard {
 impl Drop for InFlightGuard {
     fn drop(&mut self) {
         self.in_flight.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const REQUEST_WITH_VALID_TOKEN: &str = concat!(
+        "POST /v1/ingest HTTP/1.1\r\n",
+        "Host: 127.0.0.1:8080\r\n",
+        "Authorization: Bearer expected-token\r\n",
+        "Content-Length: 2\r\n",
+        "\r\n",
+        "{}"
+    );
+
+    #[test]
+    fn allows_ingest_when_no_token_is_configured() {
+        assert!(authorized_ingest_request(
+            "POST /v1/ingest HTTP/1.1\r\n\r\n{}",
+            None
+        ));
+    }
+
+    #[test]
+    fn accepts_matching_bearer_token() {
+        assert!(authorized_ingest_request(
+            REQUEST_WITH_VALID_TOKEN,
+            Some("expected-token")
+        ));
+    }
+
+    #[test]
+    fn rejects_missing_bearer_token_when_configured() {
+        assert!(!authorized_ingest_request(
+            "POST /v1/ingest HTTP/1.1\r\nHost: 127.0.0.1:8080\r\n\r\n{}",
+            Some("expected-token")
+        ));
+    }
+
+    #[test]
+    fn rejects_invalid_bearer_token() {
+        let request = REQUEST_WITH_VALID_TOKEN.replace("expected-token", "wrong-token");
+
+        assert!(!authorized_ingest_request(&request, Some("expected-token")));
+    }
+
+    #[test]
+    fn parses_authorization_header_case_insensitively() {
+        let request = concat!(
+            "POST /v1/ingest HTTP/1.1\r\n",
+            "authorization: bearer expected-token\r\n",
+            "\r\n"
+        );
+
+        assert_eq!(bearer_token_from_request(request), Some("expected-token"));
+    }
+
+    #[test]
+    fn ignores_authorization_text_in_body() {
+        let request = concat!(
+            "POST /v1/ingest HTTP/1.1\r\n",
+            "Content-Length: 36\r\n",
+            "\r\n",
+            "Authorization: Bearer expected-token"
+        );
+
+        assert_eq!(bearer_token_from_request(request), None);
+    }
+
+    #[test]
+    fn ignores_blank_configured_token() {
+        assert!(authorized_ingest_request(
+            "POST /v1/ingest HTTP/1.1\r\n\r\n{}",
+            Some("  ")
+        ));
     }
 }

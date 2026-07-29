@@ -7,6 +7,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+use crossterm::cursor::MoveTo;
+use crossterm::event::{read, Event, KeyCode};
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType};
+use crossterm::ExecutableCommand;
 use sha2::{Digest, Sha256};
 
 use crustacian::edr_transport;
@@ -18,26 +22,29 @@ const DEFAULT_CLAM_DIR: &str = "/etc/clamav";
 
 fn main() {
     loop {
-        println!("================ Crustacian Antivirus CLI ================");
-        println!("1. Initialize / repair ClamAV environment");
-        println!("2. Run a new scan");
-        println!("3. View previous scans");
-        println!("4. Endpoint EDR R&D preview");
-        println!("5. Exit");
-        print!("Select option (1-5): ");
-        flush_stdout();
+        let selected = select_from_menu(
+            "Main Console",
+            "Operational menu",
+            "choose a ClamAV task or endpoint telemetry preview",
+            &[
+                "Initialize / repair ClamAV environment",
+                "Run a new scan",
+                "View previous scans",
+                "Endpoint EDR R&D preview",
+                "Exit",
+            ],
+        );
 
-        let sel = read_line();
-        match sel.as_str() {
-            "1" => init_cmd(),
-            "2" => scan_cmd(),
-            "3" => history_menu(),
-            "4" => endpoint_rd_menu(),
-            "5" => {
+        match selected {
+            Some(0) => init_cmd(),
+            Some(1) => scan_cmd(),
+            Some(2) => history_menu(),
+            Some(3) => endpoint_rd_menu(),
+            Some(4) | None => {
                 println!("Goodbye.");
                 break;
             }
-            _ => println!("Invalid choice."),
+            _ => {}
         }
     }
 }
@@ -134,18 +141,21 @@ fn init_linux(_clamdir: &str) -> io::Result<()> {
 fn scan_cmd() {
     let clamdir = String::from(DEFAULT_CLAM_DIR);
 
-    println!("\nSelect scan type:");
-    println!("1. Quick (Home, Documents, Downloads, Desktop, Temp)");
-    println!("2. Full (Root /)");
-    println!("3. Custom paths");
-    print!("Choice: ");
-    flush_stdout();
-
-    let sel = read_line();
+    let sel = select_from_menu(
+        "Scan Target",
+        "Nested scan menu",
+        "choose what Crustacian should inspect",
+        &[
+            "Quick scan (Home, Documents, Downloads, Desktop, Temp)",
+            "Full scan (Root / system drive)",
+            "Custom paths",
+            "Back",
+        ],
+    );
     let mut scan_targets: Vec<String> = Vec::new();
 
-    match sel.as_str() {
-        "1" => {
+    match sel {
+        Some(0) => {
             #[cfg(windows)]
             {
                 let userprof = std::env::var("USERPROFILE")
@@ -194,13 +204,13 @@ fn scan_cmd() {
                 scan_targets.push("/tmp".to_string());
             }
         }
-        "2" => {
+        Some(1) => {
             #[cfg(windows)]
             scan_targets.push("C:\\".to_string());
             #[cfg(unix)]
             scan_targets.push("/".to_string());
         }
-        "3" => {
+        Some(2) => {
             print!("Enter semicolon-separated paths: ");
             flush_stdout();
             let p = read_line();
@@ -211,25 +221,22 @@ fn scan_cmd() {
                 }
             }
         }
-        _ => {
-            println!("Invalid option. Returning to main menu.");
-            return;
-        }
+        _ => return,
     }
 
-    println!("\nWhat should be done with infected files?");
-    println!("1. Report only (default)");
-    println!("2. Move to Quarantine");
-    println!("3. Delete");
-    print!("Choice: ");
-    flush_stdout();
-
-    let act = read_line();
+    let act = select_from_menu(
+        "Infected File Action",
+        "Nested scan menu",
+        "destructive actions require an explicit selection",
+        &["Report only", "Move to quarantine", "Delete", "Back"],
+    );
     let mut mode = "report";
-    if act == "2" {
+    if act == Some(1) {
         mode = "quarantine";
-    } else if act == "3" {
+    } else if act == Some(2) {
         mode = "remove";
+    } else if act.is_none() || act == Some(3) {
+        return;
     }
 
     print!("\nDo a quick pre-count of files for better ETA? (Y/n): ");
@@ -447,45 +454,50 @@ fn scan_cmd() {
 }
 
 fn endpoint_rd_menu() {
-    println!("\n=== Endpoint EDR R&D Preview ===");
-    println!("1. Write SIEM telemetry config template");
-    println!("2. Generate local endpoint telemetry snapshot");
-    println!("3. Generate response action plan");
-    println!("4. Run first-stage integration dry run");
-    println!("5. Show local telemetry spool status");
-    println!("6. Ship telemetry spool to ingest server");
-    println!("7. Back");
-    print!("Choice: ");
-    flush_stdout();
+    loop {
+        let selected = select_from_menu(
+            "Endpoint EDR Preview",
+            "R&D telemetry menu",
+            "generate local-only endpoint artifacts or ship the spool",
+            &[
+                "Write SIEM telemetry config template",
+                "Generate local endpoint telemetry snapshot",
+                "Generate response action plan",
+                "Run first-stage integration dry run",
+                "Show local telemetry spool status",
+                "Ship telemetry spool to ingest server",
+                "Back",
+            ],
+        );
 
-    match read_line().as_str() {
-        "1" => match write_endpoint_config_template() {
-            Ok(path) => println!("Wrote template: {}", path.display()),
-            Err(e) => eprintln!("[!] Failed to write template: {e}"),
-        },
-        "2" => match write_endpoint_snapshot("manual_snapshot") {
-            Ok((path, hash)) => {
-                println!("Wrote snapshot: {}", path.display());
-                println!("Snapshot SHA-256: {hash}");
-            }
-            Err(e) => eprintln!("[!] Failed to write snapshot: {e}"),
-        },
-        "3" => match write_response_action_plan("manual_rd_review", true, true, true) {
-            Ok(path) => println!("Wrote disabled response plan: {}", path.display()),
-            Err(e) => eprintln!("[!] Failed to write response plan: {e}"),
-        },
-        "4" => match write_integration_dry_run("manual_integration_check") {
-            Ok(path) => println!("Wrote integration dry-run record: {}", path.display()),
-            Err(e) => eprintln!("[!] Failed to write integration dry-run record: {e}"),
-        },
-        "5" => show_telemetry_spool_status(),
-        "6" => ship_telemetry_spool_menu(),
-        "7" => return,
-        _ => println!("Invalid option."),
+        match selected {
+            Some(0) => match write_endpoint_config_template() {
+                Ok(path) => println!("Wrote template: {}", path.display()),
+                Err(e) => eprintln!("[!] Failed to write template: {e}"),
+            },
+            Some(1) => match write_endpoint_snapshot("manual_snapshot") {
+                Ok((path, hash)) => {
+                    println!("Wrote snapshot: {}", path.display());
+                    println!("Snapshot SHA-256: {hash}");
+                }
+                Err(e) => eprintln!("[!] Failed to write snapshot: {e}"),
+            },
+            Some(2) => match write_response_action_plan("manual_rd_review", true, true, true) {
+                Ok(path) => println!("Wrote disabled response plan: {}", path.display()),
+                Err(e) => eprintln!("[!] Failed to write response plan: {e}"),
+            },
+            Some(3) => match write_integration_dry_run("manual_integration_check") {
+                Ok(path) => println!("Wrote integration dry-run record: {}", path.display()),
+                Err(e) => eprintln!("[!] Failed to write integration dry-run record: {e}"),
+            },
+            Some(4) => show_telemetry_spool_status(),
+            Some(5) => ship_telemetry_spool_menu(),
+            _ => return,
+        }
+
+        println!("\nPress Enter to return to the endpoint menu...");
+        wait_for_enter();
     }
-
-    println!("\nPress Enter to return to main menu...");
-    wait_for_enter();
 }
 
 fn history_menu() {
@@ -496,26 +508,32 @@ fn history_menu() {
         return;
     }
 
-    for (i, d) in scans.iter().enumerate() {
-        println!(
-            "[{}] {}",
-            i + 1,
-            d.file_name().unwrap_or_default().to_string_lossy()
-        );
-    }
-    print!("Enter # to view or Enter to go back: ");
-    flush_stdout();
-    let c = read_line();
-    if c.trim().is_empty() {
+    let mut options: Vec<String> = scans
+        .iter()
+        .map(|d| {
+            d.file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    options.push("Back".to_string());
+    let option_refs: Vec<&str> = options.iter().map(String::as_str).collect();
+
+    let selected = select_from_menu(
+        "Scan History",
+        "Nested history menu",
+        "choose a previous scan report to view",
+        &option_refs,
+    );
+    let Some(idx) = selected else {
+        return;
+    };
+    if idx >= scans.len() {
         return;
     }
 
-    let idx: usize = c.trim().parse().unwrap_or(0);
-    if idx == 0 || idx > scans.len() {
-        return;
-    }
-
-    let d = &scans[idx - 1];
+    let d = &scans[idx];
     println!(
         "===== {} =====",
         d.file_name().unwrap_or_default().to_string_lossy()
@@ -592,8 +610,7 @@ fn ensure_db_updated(clamdir: &str) -> io::Result<()> {
         println!("    DB appears present after retries; proceeding cautiously.");
         Ok(())
     } else {
-        Err(io::Error::new(
-            io::ErrorKind::Other,
+        Err(io::Error::other(
             "signature DB not present after multiple freshclam attempts",
         ))
     }
@@ -639,10 +656,7 @@ fn ensure_service_installed_and_running(clamdir: &str) -> io::Result<()> {
         println!("    clamd service not found; installing...");
         let status = Command::new(&clamd_exe).arg("--install").status();
         if !status.map(|s| s.success()).unwrap_or(false) {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "failed to run clamd.exe --install",
-            ));
+            return Err(io::Error::other("failed to run clamd.exe --install"));
         }
     } else {
         println!("    clamd service already installed.");
@@ -655,8 +669,7 @@ fn ensure_service_installed_and_running(clamdir: &str) -> io::Result<()> {
             .args(["config", "clamd", "start=", "demand"])
             .status();
         if !status.map(|s| s.success()).unwrap_or(false) {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
+            return Err(io::Error::other(
                 "failed to re-enable clamd service (sc config clamd start= demand)",
             ));
         }
@@ -680,8 +693,7 @@ fn ensure_service_installed_and_running(clamdir: &str) -> io::Result<()> {
             println!("    --- net start error ---");
             println!("{stderr}");
         }
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
+        return Err(io::Error::other(
             "failed to start clamd service (service may be disabled by policy or misconfigured)",
         ));
     }
@@ -724,6 +736,194 @@ fn service_is_disabled(name: &str) -> bool {
 }
 
 // ========== GENERIC HELPERS (unchanged / lightly tweaked) ==========
+
+const MENU_WIDTH: usize = 78;
+
+struct RawModeGuard;
+
+impl Drop for RawModeGuard {
+    fn drop(&mut self) {
+        let _ = disable_raw_mode();
+    }
+}
+
+fn select_from_menu(title: &str, stage: &str, reason: &str, options: &[&str]) -> Option<usize> {
+    if options.is_empty() {
+        return None;
+    }
+
+    if enable_raw_mode().is_err() {
+        return fallback_select_from_menu(title, options);
+    }
+    let raw_guard = RawModeGuard;
+
+    let mut selected: usize = 0;
+    render_menu(title, stage, reason, options, selected);
+
+    loop {
+        match read() {
+            Ok(Event::Key(event)) => match event.code {
+                KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('K') => {
+                    selected = selected.checked_sub(1).unwrap_or(options.len() - 1);
+                    render_menu(title, stage, reason, options, selected);
+                }
+                KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('J') => {
+                    selected = (selected + 1) % options.len();
+                    render_menu(title, stage, reason, options, selected);
+                }
+                KeyCode::Enter => {
+                    clear_terminal();
+                    return Some(selected);
+                }
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') => {
+                    clear_terminal();
+                    return None;
+                }
+                _ => {}
+            },
+            Ok(_) => {}
+            Err(_) => {
+                clear_terminal();
+                drop(raw_guard);
+                return fallback_select_from_menu(title, options);
+            }
+        }
+    }
+}
+
+fn render_menu(title: &str, stage: &str, reason: &str, options: &[&str], selected: usize) {
+    clear_terminal();
+    println!("{}", "=".repeat(MENU_WIDTH));
+    for line in [
+        "",
+        "    ______                __             _",
+        "   / ____/______  _______/ /_____ ______(_)___ _____",
+        "  / /   / ___/ / / / ___/ __/ __ `/ ___/ / __ `/ __ \\",
+        " / /___/ /  / /_/ (__  ) /_/ /_/ / /__/ / /_/ / / / /",
+        " \\____/_/   \\__,_/____/\\__/\\__,_/\\___/_/\\__,_/_/ /_/",
+        "",
+        "                     Protecting those who protect.",
+        "",
+    ] {
+        println!("{}", menu_box_line(line));
+    }
+    println!("={}=", "-".repeat(MENU_WIDTH - 2));
+    println!("{}", menu_box_line(&format!("menu     {title}")));
+    println!(
+        "{}",
+        menu_box_line(&format!("repo     {}", current_repo_display()))
+    );
+    println!(
+        "{}",
+        menu_box_line(&format!("clamav   {}", DEFAULT_CLAM_DIR))
+    );
+    println!("{}", menu_box_line(&format!("stage    {stage}")));
+    println!("{}", menu_box_line(&format!("reason   {reason}")));
+    println!("{}", menu_box_line(""));
+    println!("{}", menu_box_line("Status"));
+    println!(
+        "{}",
+        menu_box_line(&format!("  platform  {}", std::env::consts::OS))
+    );
+    println!(
+        "{}",
+        menu_box_line(&format!("  reports   {}", base_scans_dir().display()))
+    );
+    println!(
+        "{}",
+        menu_box_line(&format!("  scans     {}", list_scan_dirs().len()))
+    );
+    println!(
+        "{}",
+        menu_box_line(&format!("  edr spool {}", telemetry_spool_status_label()))
+    );
+    println!(
+        "{}",
+        menu_box_line(&format!("  git       {}", git_dirty_label()))
+    );
+    println!("{}", "=".repeat(MENU_WIDTH));
+    println!();
+    println!("? Select (Up/Down, Enter, q to back) >");
+    for (idx, option) in options.iter().enumerate() {
+        let cursor = if idx == selected { "❯" } else { " " };
+        println!("{cursor} {option}");
+    }
+    flush_stdout();
+}
+
+fn menu_box_line(content: &str) -> String {
+    let inner_width = MENU_WIDTH - 4;
+    let mut inner = content.to_string();
+    if inner.chars().count() > inner_width {
+        inner = truncate_to_width(&inner, inner_width);
+    }
+    format!("= {inner:<inner_width$} =")
+}
+
+fn truncate_to_width(value: &str, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+
+    let mut out: String = value.chars().take(width.saturating_sub(1)).collect();
+    out.push('~');
+    out
+}
+
+fn current_repo_display() -> String {
+    std::env::current_dir()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| String::from("unknown"))
+}
+
+fn git_dirty_label() -> &'static str {
+    match Command::new("git")
+        .args(["status", "--porcelain"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+    {
+        Ok(output) if output.status.success() && output.stdout.is_empty() => "clean",
+        Ok(output) if output.status.success() => "dirty",
+        _ => "unknown",
+    }
+}
+
+fn telemetry_spool_status_label() -> String {
+    let path = siem_spool_path();
+    match fs::metadata(path) {
+        Ok(meta) => format!("present ({} bytes)", meta.len()),
+        Err(_) => String::from("empty"),
+    }
+}
+
+fn clear_terminal() {
+    let mut stdout = io::stdout();
+    let _ = stdout.execute(Clear(ClearType::All));
+    let _ = stdout.execute(MoveTo(0, 0));
+}
+
+fn fallback_select_from_menu(title: &str, options: &[&str]) -> Option<usize> {
+    loop {
+        println!("================ Crustacian {title} ================");
+        for (idx, option) in options.iter().enumerate() {
+            println!("{}. {}", idx + 1, option);
+        }
+        print!("Select option (1-{}), or Enter to go back: ", options.len());
+        flush_stdout();
+
+        let sel = read_line();
+        if sel.trim().is_empty() {
+            return None;
+        }
+        if let Ok(idx) = sel.trim().parse::<usize>() {
+            if (1..=options.len()).contains(&idx) {
+                return Some(idx - 1);
+            }
+        }
+        println!("Invalid choice.");
+    }
+}
 
 fn flush_stdout() {
     let _ = io::stdout().flush();
@@ -797,16 +997,6 @@ fn run(name: &str, args: &[&str]) -> io::Result<()> {
     Command::new(name).args(args).status().map(|_| ())
 }
 
-#[cfg(windows)]
-fn run_silent(name: &str, args: &[&str]) -> io::Result<()> {
-    Command::new(name)
-        .args(args)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|_| ())
-}
-
 fn cmd_exists(name: &str) -> bool {
     #[cfg(windows)]
     {
@@ -860,8 +1050,7 @@ fn try_install_clamav() -> io::Result<()> {
         }
     }
 
-    Err(io::Error::new(
-        io::ErrorKind::Other,
+    Err(io::Error::other(
         "no package manager succeeded (winget/choco)",
     ))
 }
@@ -1490,51 +1679,6 @@ allowed_actions = ["recommend_network_isolation", "write_local_recovery_plan"]
 destructive_shutdown_enabled = false
 "#;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn json_escape_handles_control_characters() {
-        assert_eq!(json_escape("a\"b\\c\n"), "a\\\"b\\\\c\\n");
-    }
-
-    #[test]
-    fn telemetry_event_contains_required_schema_fields() {
-        let event = endpoint_event_json(EndpointEvent {
-            event_kind: "unit_test",
-            severity: "informational",
-            classifier: "test.classifier",
-            confidence: 0.5,
-            actor: "test",
-            auth_provider: "none",
-            evidence: "sample",
-            lockout_recommended: false,
-            isolation_recommended: false,
-            snapshot_hash: "abc123",
-        });
-
-        assert!(event.contains("\"schema_version\":\"crustacian.endpoint.telemetry.v0\""));
-        assert!(event.contains("\"endpoint_id\":\""));
-        assert!(event.contains("\"forensic_snapshot_sha256\":\"abc123\""));
-    }
-
-    #[test]
-    fn sha256_hex_is_stable() {
-        assert_eq!(
-            sha256_hex(b"crustacian"),
-            "6318dff62e076651a94d98215372148ed0fc9dbbf95db9956ace5bc077e852f9"
-        );
-    }
-
-    #[test]
-    fn auth_provider_defaults_to_none_without_env() {
-        std::env::remove_var("CRUSTACIAN_AUTHENTIK_URL");
-        std::env::remove_var("CRUSTACIAN_LDAP_URL");
-        assert_eq!(auth_provider_hint(), "none");
-    }
-}
-
 // --- Config templates ---
 
 #[cfg(windows)]
@@ -1621,3 +1765,48 @@ NotifyClamd "C:\\Program Files\\ClamAV\\clamd.conf"
 TestDatabases yes
 Bytecode yes
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn json_escape_handles_control_characters() {
+        assert_eq!(json_escape("a\"b\\c\n"), "a\\\"b\\\\c\\n");
+    }
+
+    #[test]
+    fn telemetry_event_contains_required_schema_fields() {
+        let event = endpoint_event_json(EndpointEvent {
+            event_kind: "unit_test",
+            severity: "informational",
+            classifier: "test.classifier",
+            confidence: 0.5,
+            actor: "test",
+            auth_provider: "none",
+            evidence: "sample",
+            lockout_recommended: false,
+            isolation_recommended: false,
+            snapshot_hash: "abc123",
+        });
+
+        assert!(event.contains("\"schema_version\":\"crustacian.endpoint.telemetry.v0\""));
+        assert!(event.contains("\"endpoint_id\":\""));
+        assert!(event.contains("\"forensic_snapshot_sha256\":\"abc123\""));
+    }
+
+    #[test]
+    fn sha256_hex_is_stable() {
+        assert_eq!(
+            sha256_hex(b"crustacian"),
+            "6318dff62e076651a94d98215372148ed0fc9dbbf95db9956ace5bc077e852f9"
+        );
+    }
+
+    #[test]
+    fn auth_provider_defaults_to_none_without_env() {
+        std::env::remove_var("CRUSTACIAN_AUTHENTIK_URL");
+        std::env::remove_var("CRUSTACIAN_LDAP_URL");
+        assert_eq!(auth_provider_hint(), "none");
+    }
+}

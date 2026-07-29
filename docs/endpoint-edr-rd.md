@@ -75,6 +75,10 @@ Classification examples:
    backoff and jitter, retain failed batches, and record server backpressure.
 5. Parser packs: publish field mappings for target SIEMs.
 
+Future dashboard, Suricata, mesh broker, and optional ML integration work is
+tracked in
+[ML, Suricata, Mesh Broker, and Dashboard Checklist](ml-suricata-dashboard-checklist.md).
+
 The current built-in sender supports `http://` ingest URLs for local labs and
 `https://` ingest URLs for deployments with TLS termination in front of the
 ingest server. Native mTLS is not implemented yet.
@@ -114,8 +118,13 @@ Run locally:
 ```bash
 cargo run --bin crustacian-ingest -- \
   --bind 127.0.0.1:8080 \
-  --data-dir target/crustacian-ingest
+  --data-dir target/crustacian-ingest \
+  --bearer-token "$CRUSTACIAN_INGEST_TOKEN"
 ```
+
+When `CRUSTACIAN_INGEST_TOKEN` or `--bearer-token` is configured, `POST
+/v1/ingest` requires `Authorization: Bearer <token>`. `GET /health` remains
+open for liveness checks.
 
 Then use the endpoint EDR preview menu to ship the local spool to:
 

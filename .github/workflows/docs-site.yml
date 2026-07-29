@@ -3,14 +3,14 @@ name: Docs and Site
 on:
   push:
     paths:
-      - "ReadMe.md"
+      - "README.md"
       - "docs/**"
       - "schemas/**"
       - "index.html"
       - ".github/workflows/docs-site.yml"
   pull_request:
     paths:
-      - "ReadMe.md"
+      - "README.md"
       - "docs/**"
       - "schemas/**"
       - "index.html"

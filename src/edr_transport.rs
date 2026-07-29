@@ -454,6 +454,15 @@ pub fn validate_batch(batch: &IngestBatch, max_batch_events: usize) -> Result<()
             batch.schema_version
         ));
     }
+    if batch.batch_id.trim().len() < 8 {
+        return Err("batch_id must be at least 8 characters".to_string());
+    }
+    if batch.endpoint_id.trim().len() < 3 {
+        return Err("endpoint_id must be at least 3 characters".to_string());
+    }
+    if batch.sent_at.trim().is_empty() {
+        return Err("sent_at must not be empty".to_string());
+    }
     if batch.events.is_empty() {
         return Err("batch contains no events".to_string());
     }
@@ -471,21 +480,62 @@ pub fn validate_batch(batch: &IngestBatch, max_batch_events: usize) -> Result<()
             "event_id",
             "timestamp",
             "endpoint_id",
+            "asset_hostname",
+            "platform",
             "event_kind",
             "severity",
             "classifier",
+            "actor",
+            "auth_provider",
+            "forensic_snapshot_sha256",
             "evidence",
         ] {
-            if event.get(field).is_none() {
-                return Err(format!("event missing required field: {field}"));
-            }
+            require_string_field(event, field)?;
+        }
+        for field in ["lockout_recommended", "isolation_recommended"] {
+            require_bool_field(event, field)?;
+        }
+
+        if event.get("schema_version").and_then(Value::as_str)
+            != Some("crustacian.endpoint.telemetry.v0")
+        {
+            return Err("event has unsupported schema_version".to_string());
+        }
+        if require_string_field(event, "event_id")?.len() < 8 {
+            return Err("event_id must be at least 8 characters".to_string());
         }
         if event.get("endpoint_id").and_then(Value::as_str) != Some(batch.endpoint_id.as_str()) {
             return Err("event endpoint_id does not match batch endpoint_id".to_string());
         }
+        let confidence = event
+            .get("confidence")
+            .and_then(Value::as_f64)
+            .ok_or_else(|| "event missing required numeric field: confidence".to_string())?;
+        if !(0.0..=1.0).contains(&confidence) {
+            return Err("event confidence must be between 0 and 1".to_string());
+        }
     }
 
     Ok(())
+}
+
+fn require_string_field<'a>(event: &'a Value, field: &str) -> Result<&'a str, String> {
+    let value = event
+        .get(field)
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("event missing required string field: {field}"))?;
+    if value.trim().is_empty() && field != "forensic_snapshot_sha256" {
+        return Err(format!("event string field must not be empty: {field}"));
+    }
+    Ok(value)
+}
+
+fn require_bool_field(event: &Value, field: &str) -> Result<(), String> {
+    event
+        .get(field)
+        .and_then(Value::as_bool)
+        .map(|_| ())
+        .ok_or_else(|| format!("event missing required boolean field: {field}"))
 }
 
 fn read_spool_lines(spool_path: &Path) -> io::Result<Vec<String>> {
@@ -781,25 +831,45 @@ mod tests {
 
     #[test]
     fn validates_matching_batch() {
-        let batch = IngestBatch {
-            schema_version: INGEST_BATCH_SCHEMA.to_string(),
-            batch_id: "batch-1".to_string(),
-            endpoint_id: "endpoint-1".to_string(),
-            sent_at: chrono::Utc::now().to_rfc3339(),
-            spool: SpoolStats::default(),
-            events: vec![json!({
-                "schema_version": "crustacian.endpoint.telemetry.v0",
-                "event_id": "event-1",
-                "timestamp": chrono::Utc::now().to_rfc3339(),
-                "endpoint_id": "endpoint-1",
-                "event_kind": "agent.health",
-                "severity": "informational",
-                "classifier": "agent.health",
-                "evidence": "ok"
-            })],
-        };
+        let batch = valid_test_batch();
 
         assert!(validate_batch(&batch, 10).is_ok());
+    }
+
+    #[test]
+    fn rejects_event_missing_schema_required_field() {
+        let mut batch = valid_test_batch();
+        batch.events[0]
+            .as_object_mut()
+            .unwrap()
+            .remove("asset_hostname");
+
+        assert_eq!(
+            validate_batch(&batch, 10),
+            Err("event missing required string field: asset_hostname".to_string())
+        );
+    }
+
+    #[test]
+    fn rejects_confidence_outside_schema_range() {
+        let mut batch = valid_test_batch();
+        batch.events[0]["confidence"] = json!(1.5);
+
+        assert_eq!(
+            validate_batch(&batch, 10),
+            Err("event confidence must be between 0 and 1".to_string())
+        );
+    }
+
+    #[test]
+    fn rejects_mismatched_event_endpoint_id() {
+        let mut batch = valid_test_batch();
+        batch.events[0]["endpoint_id"] = json!("endpoint-2");
+
+        assert_eq!(
+            validate_batch(&batch, 10),
+            Err("event endpoint_id does not match batch endpoint_id".to_string())
+        );
     }
 
     #[test]
@@ -906,5 +976,33 @@ mod tests {
             chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
         );
         std::env::temp_dir().join(unique)
+    }
+
+    fn valid_test_batch() -> IngestBatch {
+        IngestBatch {
+            schema_version: INGEST_BATCH_SCHEMA.to_string(),
+            batch_id: "batch-0001".to_string(),
+            endpoint_id: "endpoint-1".to_string(),
+            sent_at: chrono::Utc::now().to_rfc3339(),
+            spool: SpoolStats::default(),
+            events: vec![json!({
+                "schema_version": "crustacian.endpoint.telemetry.v0",
+                "event_id": "event-0001",
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+                "endpoint_id": "endpoint-1",
+                "asset_hostname": "workstation-1",
+                "platform": "linux",
+                "event_kind": "agent.health",
+                "severity": "informational",
+                "classifier": "agent.health",
+                "confidence": 0.99,
+                "actor": "unit_test",
+                "auth_provider": "none",
+                "lockout_recommended": false,
+                "isolation_recommended": false,
+                "forensic_snapshot_sha256": "",
+                "evidence": "ok"
+            })],
+        }
     }
 }
