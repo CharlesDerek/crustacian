@@ -14,7 +14,7 @@ HELM_CHART_DIR ?= charts
 VALIDATION_KUBECONFIG ?= /dev/null
 KUBERNETES_MANIFEST_DIRS ?= k8s kubernetes manifests deploy
 SHELL_VALIDATION_DIRS ?= scripts tests
-MARKDOWN_VALIDATION_PATHS ?= ReadMe.md README.md docs
+MARKDOWN_VALIDATION_PATHS ?= README.md docs
 GITHUB_WORKFLOW_DIRS ?= .github/workflows
 OPENTOFU_DIRS ?= infra/opentofu tofu opentofu terraform infra/terraform
 

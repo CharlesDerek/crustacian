@@ -14,9 +14,11 @@ This file is the MRGI working ledger for detachable Codex repo-improvement loops
 
 ## Current Stage
 
-- [x] Hygiene: inspect repo state, clean stale task notes, identify the next best task
-- [x] Execute: implement one focused task to working state
-- [x] Test: verify deeply enough to decide whether the task deserves a checkmark
+Stage 1: Hygiene and next-task selection.
+
+- Status: Ready for Stage 2 implementation.
+- Selected next task: Add ingest authentication validation for bearer-token protected intake.
+- Rationale: This is the smallest security-focused feature that strengthens the current EDR ingest path, exercises Rust networking and validation work, and supports the README roadmap without starting the larger dashboard, ML, or mesh efforts.
 
 ## Task List
 
@@ -24,12 +26,13 @@ This file is the MRGI working ledger for detachable Codex repo-improvement loops
 
 ## Active Attempt
 
-- Task: Tighten Rust-side ingest endpoint event validation to match the checked-in telemetry schema.
-- Stage: Complete
-- Last result: Implemented stricter batch/event validation and regression tests; `cargo fmt --check`, `cargo test`, and `cargo build` pass.
+- Task: Add ingest authentication validation for bearer-token protected intake.
+- Stage: Selected for Stage 2
+- Last result: Stage 1 selected bearer-token ingest authentication as the next small showcase task after inspecting the repo, README, CODEX.md, docs, workflows, and ingest server code.
 - Last failure: None.
-- Next attempt: Add bearer-token validation on `crustacian-ingest` using `CRUSTACIAN_INGEST_TOKEN` or a CLI option, with tests for missing/invalid tokens.
+- Next attempt: Implement bearer-token validation on `crustacian-ingest` using `CRUSTACIAN_INGEST_TOKEN` or a CLI option, keep `/health` unauthenticated if desired for local liveness checks, and add tests for missing, invalid, and valid authorization headers.
 
 ## Completed Log
 
+- Completed Stage 1 hygiene: confirmed `.mrgi` is ignored, normalized the tracked readme filename to `README.md` for MRGI compatibility, and selected exactly one next task.
 - Completed stricter ingest telemetry validation in `src/edr_transport.rs`: batch metadata now enforces minimum/non-empty values, endpoint events require the schema fields from `schemas/endpoint-event.schema.json`, boolean recommendation flags must be booleans, confidence must be 0..=1, event schema version is checked, and event endpoint IDs must match the batch endpoint ID. Verified with `cargo fmt --check`, `cargo test`, and `cargo build`.
