@@ -75,6 +75,10 @@ Classification examples:
    backoff and jitter, retain failed batches, and record server backpressure.
 5. Parser packs: publish field mappings for target SIEMs.
 
+Future dashboard, Suricata, mesh broker, and optional ML integration work is
+tracked in
+[ML, Suricata, Mesh Broker, and Dashboard Checklist](ml-suricata-dashboard-checklist.md).
+
 The current built-in sender supports `http://` ingest URLs for local labs and
 `https://` ingest URLs for deployments with TLS termination in front of the
 ingest server. Native mTLS is not implemented yet.

@@ -246,6 +246,14 @@ Upcoming milestones include:
 * Optional sandboxing for file pre-processing before scan
 * Pluggable detection layers (YARA support, heuristic pre-checks)
 * Reversible, approval-gated containment workflows for managed fleets
+* Optional Langfuse/Paperclip ML integrations, Suricata intake, a React
+  dashboard, and an ad hoc mesh broker for endpoint-to-server telemetry delivery
+
+See
+[docs/ml-suricata-dashboard-checklist.md](docs/ml-suricata-dashboard-checklist.md)
+for the implementation checklist covering Rust backend APIs, TypeScript/React
+dashboard work, Suricata event normalization, mesh retry behavior, and optional
+ML service boundaries.
 
 ---
 

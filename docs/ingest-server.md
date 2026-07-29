@@ -63,3 +63,8 @@ returns immediately until the saved next-attempt timestamp is due.
 - Elastic
 - Microsoft Sentinel-compatible webhook or collector
 - SOAR ticket/case creation in dry-run-first mode
+
+See
+[ML, Suricata, Mesh Broker, and Dashboard Checklist](ml-suricata-dashboard-checklist.md)
+for the planned endpoint dashboard, Suricata intake, optional Langfuse/Paperclip
+ML integrations, and ad hoc mesh broker work.
