@@ -29,12 +29,13 @@ Stage 3: CI target matrix.
 
 - Task: Add configurable endpoint retry policy through environment variables.
 - Stage: Selected for Stage 4
-- Last result: Stage 3 split Rust CI into a Windows/Linux/macOS matrix, kept repository validation on Ubuntu, corrected docs workflow paths to watch `README.md`, and removed completed CI roadmap text from README.
+- Last result: Repaired Windows-target clippy fallout from the Stage 3 matrix by removing an unused Windows helper, using `io::Error::other` for Windows-only errors, and moving the endpoint test module after Windows config templates.
 - Last failure: None.
 - Next attempt: Add documented environment variables for endpoint ingest retry attempts, initial backoff, max backoff, and jitter while preserving bounded defaults and tests.
 
 ## Completed Log
 
+- Repaired Windows CI matrix failures in `src/main.rs`: removed unused `run_silent`, replaced Windows-only `io::ErrorKind::Other` constructions with `io::Error::other`, and moved the test module after config templates to satisfy `clippy::items-after-test-module`. Verified with `cargo fmt --check`, `cargo test`, `cargo build`, `cargo clippy --locked --all-targets -- -D warnings`, and `cargo clippy --locked --target x86_64-pc-windows-gnu --all-targets -- -D warnings`.
 - Completed CI target matrix in `.github/workflows/rust.yml`: Rust format, clippy, check, and test now run across `ubuntu-latest`, `windows-latest`, and `macos-latest`; repository-wide non-mutating validation remains Ubuntu-only with OpenTofu setup, and the docs-site workflow now watches `README.md`. Verified with PyYAML parsing for all workflow files, `make validate-github-actions`, `make validate-files`, and `git diff --check`; `actionlint` is not installed, so Makefile validation used its basic workflow checks.
 - Completed ingest bearer-token authentication in `src/bin/crustacian-ingest.rs`: `CRUSTACIAN_INGEST_TOKEN` and `--bearer-token` now enable opt-in `Authorization: Bearer <token>` enforcement for `POST /v1/ingest`; missing or invalid tokens return HTTP `401`, `/health` remains open for liveness checks, docs describe the configuration, and tests cover no-token local mode plus missing, invalid, valid, and case-insensitive bearer headers. Verified with `cargo fmt --check`, `cargo test`, `cargo build`, and `cargo clippy --locked --bin crustacian-ingest -- -D warnings`.
 - Completed Stage 1 hygiene: confirmed `.mrgi` is ignored, normalized the tracked readme filename to `README.md` for MRGI compatibility, and selected exactly one next task.

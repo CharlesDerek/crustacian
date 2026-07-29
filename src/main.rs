@@ -610,8 +610,7 @@ fn ensure_db_updated(clamdir: &str) -> io::Result<()> {
         println!("    DB appears present after retries; proceeding cautiously.");
         Ok(())
     } else {
-        Err(io::Error::new(
-            io::ErrorKind::Other,
+        Err(io::Error::other(
             "signature DB not present after multiple freshclam attempts",
         ))
     }
@@ -657,10 +656,7 @@ fn ensure_service_installed_and_running(clamdir: &str) -> io::Result<()> {
         println!("    clamd service not found; installing...");
         let status = Command::new(&clamd_exe).arg("--install").status();
         if !status.map(|s| s.success()).unwrap_or(false) {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "failed to run clamd.exe --install",
-            ));
+            return Err(io::Error::other("failed to run clamd.exe --install"));
         }
     } else {
         println!("    clamd service already installed.");
@@ -673,8 +669,7 @@ fn ensure_service_installed_and_running(clamdir: &str) -> io::Result<()> {
             .args(["config", "clamd", "start=", "demand"])
             .status();
         if !status.map(|s| s.success()).unwrap_or(false) {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
+            return Err(io::Error::other(
                 "failed to re-enable clamd service (sc config clamd start= demand)",
             ));
         }
@@ -698,8 +693,7 @@ fn ensure_service_installed_and_running(clamdir: &str) -> io::Result<()> {
             println!("    --- net start error ---");
             println!("{stderr}");
         }
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
+        return Err(io::Error::other(
             "failed to start clamd service (service may be disabled by policy or misconfigured)",
         ));
     }
@@ -1003,16 +997,6 @@ fn run(name: &str, args: &[&str]) -> io::Result<()> {
     Command::new(name).args(args).status().map(|_| ())
 }
 
-#[cfg(windows)]
-fn run_silent(name: &str, args: &[&str]) -> io::Result<()> {
-    Command::new(name)
-        .args(args)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|_| ())
-}
-
 fn cmd_exists(name: &str) -> bool {
     #[cfg(windows)]
     {
@@ -1066,8 +1050,7 @@ fn try_install_clamav() -> io::Result<()> {
         }
     }
 
-    Err(io::Error::new(
-        io::ErrorKind::Other,
+    Err(io::Error::other(
         "no package manager succeeded (winget/choco)",
     ))
 }
@@ -1696,51 +1679,6 @@ allowed_actions = ["recommend_network_isolation", "write_local_recovery_plan"]
 destructive_shutdown_enabled = false
 "#;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn json_escape_handles_control_characters() {
-        assert_eq!(json_escape("a\"b\\c\n"), "a\\\"b\\\\c\\n");
-    }
-
-    #[test]
-    fn telemetry_event_contains_required_schema_fields() {
-        let event = endpoint_event_json(EndpointEvent {
-            event_kind: "unit_test",
-            severity: "informational",
-            classifier: "test.classifier",
-            confidence: 0.5,
-            actor: "test",
-            auth_provider: "none",
-            evidence: "sample",
-            lockout_recommended: false,
-            isolation_recommended: false,
-            snapshot_hash: "abc123",
-        });
-
-        assert!(event.contains("\"schema_version\":\"crustacian.endpoint.telemetry.v0\""));
-        assert!(event.contains("\"endpoint_id\":\""));
-        assert!(event.contains("\"forensic_snapshot_sha256\":\"abc123\""));
-    }
-
-    #[test]
-    fn sha256_hex_is_stable() {
-        assert_eq!(
-            sha256_hex(b"crustacian"),
-            "6318dff62e076651a94d98215372148ed0fc9dbbf95db9956ace5bc077e852f9"
-        );
-    }
-
-    #[test]
-    fn auth_provider_defaults_to_none_without_env() {
-        std::env::remove_var("CRUSTACIAN_AUTHENTIK_URL");
-        std::env::remove_var("CRUSTACIAN_LDAP_URL");
-        assert_eq!(auth_provider_hint(), "none");
-    }
-}
-
 // --- Config templates ---
 
 #[cfg(windows)]
@@ -1827,3 +1765,48 @@ NotifyClamd "C:\\Program Files\\ClamAV\\clamd.conf"
 TestDatabases yes
 Bytecode yes
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn json_escape_handles_control_characters() {
+        assert_eq!(json_escape("a\"b\\c\n"), "a\\\"b\\\\c\\n");
+    }
+
+    #[test]
+    fn telemetry_event_contains_required_schema_fields() {
+        let event = endpoint_event_json(EndpointEvent {
+            event_kind: "unit_test",
+            severity: "informational",
+            classifier: "test.classifier",
+            confidence: 0.5,
+            actor: "test",
+            auth_provider: "none",
+            evidence: "sample",
+            lockout_recommended: false,
+            isolation_recommended: false,
+            snapshot_hash: "abc123",
+        });
+
+        assert!(event.contains("\"schema_version\":\"crustacian.endpoint.telemetry.v0\""));
+        assert!(event.contains("\"endpoint_id\":\""));
+        assert!(event.contains("\"forensic_snapshot_sha256\":\"abc123\""));
+    }
+
+    #[test]
+    fn sha256_hex_is_stable() {
+        assert_eq!(
+            sha256_hex(b"crustacian"),
+            "6318dff62e076651a94d98215372148ed0fc9dbbf95db9956ace5bc077e852f9"
+        );
+    }
+
+    #[test]
+    fn auth_provider_defaults_to_none_without_env() {
+        std::env::remove_var("CRUSTACIAN_AUTHENTIK_URL");
+        std::env::remove_var("CRUSTACIAN_LDAP_URL");
+        assert_eq!(auth_provider_hint(), "none");
+    }
+}
