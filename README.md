@@ -108,7 +108,8 @@ server-side ingest API.
 ```bash
 target/release/crustacian-ingest \
   --bind 127.0.0.1:8080 \
-  --data-dir target/crustacian-ingest
+  --data-dir target/crustacian-ingest \
+  --bearer-token "$CRUSTACIAN_INGEST_TOKEN"
 ```
 
 Endpoints submit batches to:
@@ -118,6 +119,10 @@ POST http://127.0.0.1:8080/v1/ingest
 POST https://ingest.example.com/v1/ingest
 GET  http://127.0.0.1:8080/health
 ```
+
+When `CRUSTACIAN_INGEST_TOKEN` or `--bearer-token` is configured, ingest
+requests must include `Authorization: Bearer <token>`. `GET /health` remains
+available for local liveness checks.
 
 Accepted telemetry is persisted as:
 
@@ -225,7 +230,7 @@ Upcoming milestones include:
 * Enhanced logging (CSV, NDJSON, syslog integration)
 * SIEM-ready endpoint event schema validation
 * Dry-run SIEM/authentik/LDAP/containment readiness checks
-* Configurable retry policy, ingest authentication, and CI target checks
+* Configurable retry policy and CI target checks
 
 ### **Medium Term**
 
@@ -233,7 +238,7 @@ Upcoming milestones include:
 * Plugin-based output formatting
 * Remote-report mode (print-only vs write-to-log modes)
 * Configurable retry policy through environment or endpoint config
-* Server-side ingest authentication validation for bearer-token protected intake
+* Server-side ingest authorization policy for endpoint identity and replay protection
 * CI target matrix for Windows, Linux, and macOS checks
 * Optional syslog SIEM transport with authenticated delivery and retry queue
 * authentik/LDAP response connector in dry-run mode

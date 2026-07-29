@@ -134,7 +134,7 @@ The current project should keep ClamAV endpoint scanning and the existing
 ## Security And Safety Gates
 
 - [ ] Require TLS for production ingest, dashboard, and ML service traffic.
-- [ ] Add bearer token or stronger authentication for endpoint ingest.
+- [x] Add bearer token or stronger authentication for endpoint ingest.
 - [ ] Add dashboard authentication and authorization before mutable controls.
 - [ ] Add audit logging for policy changes, integration toggles, and replayed
   broker batches.

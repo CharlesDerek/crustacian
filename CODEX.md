@@ -14,25 +14,27 @@ This file is the MRGI working ledger for detachable Codex repo-improvement loops
 
 ## Current Stage
 
-Stage 1: Hygiene and next-task selection.
+Stage 2: Ingest bearer-token authentication.
 
-- Status: Ready for Stage 2 implementation.
-- Selected next task: Add ingest authentication validation for bearer-token protected intake.
-- Rationale: This is the smallest security-focused feature that strengthens the current EDR ingest path, exercises Rust networking and validation work, and supports the README roadmap without starting the larger dashboard, ML, or mesh efforts.
+- Status: Complete; ready for Stage 3 selection.
+- Completed task: Add ingest authentication validation for bearer-token protected intake.
+- Selected next task: Add CI target matrix for Windows, Linux, and macOS Rust checks.
+- Rationale: A target matrix showcases Rust CI discipline, makes the README's cross-platform direction measurable, and should surface platform-specific gaps before larger endpoint work expands.
 
 ## Task List
 
-- [ ] Add ingest authentication validation for bearer-token protected intake
+- [ ] Add CI target matrix for Windows, Linux, and macOS Rust checks
 
 ## Active Attempt
 
-- Task: Add ingest authentication validation for bearer-token protected intake.
-- Stage: Selected for Stage 2
-- Last result: Stage 1 selected bearer-token ingest authentication as the next small showcase task after inspecting the repo, README, CODEX.md, docs, workflows, and ingest server code.
+- Task: Add CI target matrix for Windows, Linux, and macOS Rust checks.
+- Stage: Selected for Stage 3
+- Last result: Stage 2 completed opt-in server-side bearer-token enforcement for `POST /v1/ingest`, updated docs, and added unit tests for missing, invalid, and valid authorization headers. Verification passed with `cargo fmt --check`, `cargo test`, `cargo build`, and `cargo clippy --locked --bin crustacian-ingest -- -D warnings`.
 - Last failure: None.
-- Next attempt: Implement bearer-token validation on `crustacian-ingest` using `CRUSTACIAN_INGEST_TOKEN` or a CLI option, keep `/health` unauthenticated if desired for local liveness checks, and add tests for missing, invalid, and valid authorization headers.
+- Next attempt: Update the Rust CI workflow to run appropriate checks across Windows, Linux, and macOS, accounting for platform-specific runtime behavior without claiming unsupported features.
 
 ## Completed Log
 
+- Completed ingest bearer-token authentication in `src/bin/crustacian-ingest.rs`: `CRUSTACIAN_INGEST_TOKEN` and `--bearer-token` now enable opt-in `Authorization: Bearer <token>` enforcement for `POST /v1/ingest`; missing or invalid tokens return HTTP `401`, `/health` remains open for liveness checks, docs describe the configuration, and tests cover no-token local mode plus missing, invalid, valid, and case-insensitive bearer headers. Verified with `cargo fmt --check`, `cargo test`, `cargo build`, and `cargo clippy --locked --bin crustacian-ingest -- -D warnings`.
 - Completed Stage 1 hygiene: confirmed `.mrgi` is ignored, normalized the tracked readme filename to `README.md` for MRGI compatibility, and selected exactly one next task.
 - Completed stricter ingest telemetry validation in `src/edr_transport.rs`: batch metadata now enforces minimum/non-empty values, endpoint events require the schema fields from `schemas/endpoint-event.schema.json`, boolean recommendation flags must be booleans, confidence must be 0..=1, event schema version is checked, and event endpoint IDs must match the batch endpoint ID. Verified with `cargo fmt --check`, `cargo test`, and `cargo build`.
