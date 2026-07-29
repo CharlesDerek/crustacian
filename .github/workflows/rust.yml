@@ -8,16 +8,19 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  validate:
-    runs-on: ubuntu-latest
+  rust:
+    name: Rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install OpenTofu
-        uses: opentofu/setup-opentofu@v2
-        with:
-          tofu_wrapper: false
 
       - name: Install Rust components
         run: rustup component add rustfmt clippy
@@ -33,6 +36,18 @@ jobs:
 
       - name: Test
         run: cargo test --locked --verbose
+
+  repository:
+    name: Repository validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install OpenTofu
+        uses: opentofu/setup-opentofu@v2
+        with:
+          tofu_wrapper: false
 
       - name: Repository validation
         run: make validate-non-mutating

@@ -14,27 +14,28 @@ This file is the MRGI working ledger for detachable Codex repo-improvement loops
 
 ## Current Stage
 
-Stage 2: Ingest bearer-token authentication.
+Stage 3: CI target matrix.
 
-- Status: Complete; ready for Stage 3 selection.
-- Completed task: Add ingest authentication validation for bearer-token protected intake.
-- Selected next task: Add CI target matrix for Windows, Linux, and macOS Rust checks.
-- Rationale: A target matrix showcases Rust CI discipline, makes the README's cross-platform direction measurable, and should surface platform-specific gaps before larger endpoint work expands.
+- Status: Complete; ready for Stage 4 selection.
+- Completed task: Add CI target matrix for Windows, Linux, and macOS Rust checks.
+- Selected next task: Add configurable endpoint retry policy through environment variables.
+- Rationale: Configurable retry policy builds on the ingest/backpressure work, showcases Rust configuration design and bounded failure handling, and remains smaller than the dashboard, exporter, or mesh roadmap items.
 
 ## Task List
 
-- [ ] Add CI target matrix for Windows, Linux, and macOS Rust checks
+- [ ] Add configurable endpoint retry policy through environment variables
 
 ## Active Attempt
 
-- Task: Add CI target matrix for Windows, Linux, and macOS Rust checks.
-- Stage: Selected for Stage 3
-- Last result: Stage 2 completed opt-in server-side bearer-token enforcement for `POST /v1/ingest`, updated docs, and added unit tests for missing, invalid, and valid authorization headers. Verification passed with `cargo fmt --check`, `cargo test`, `cargo build`, and `cargo clippy --locked --bin crustacian-ingest -- -D warnings`.
+- Task: Add configurable endpoint retry policy through environment variables.
+- Stage: Selected for Stage 4
+- Last result: Stage 3 split Rust CI into a Windows/Linux/macOS matrix, kept repository validation on Ubuntu, corrected docs workflow paths to watch `README.md`, and removed completed CI roadmap text from README.
 - Last failure: None.
-- Next attempt: Update the Rust CI workflow to run appropriate checks across Windows, Linux, and macOS, accounting for platform-specific runtime behavior without claiming unsupported features.
+- Next attempt: Add documented environment variables for endpoint ingest retry attempts, initial backoff, max backoff, and jitter while preserving bounded defaults and tests.
 
 ## Completed Log
 
+- Completed CI target matrix in `.github/workflows/rust.yml`: Rust format, clippy, check, and test now run across `ubuntu-latest`, `windows-latest`, and `macos-latest`; repository-wide non-mutating validation remains Ubuntu-only with OpenTofu setup, and the docs-site workflow now watches `README.md`. Verified with PyYAML parsing for all workflow files, `make validate-github-actions`, `make validate-files`, and `git diff --check`; `actionlint` is not installed, so Makefile validation used its basic workflow checks.
 - Completed ingest bearer-token authentication in `src/bin/crustacian-ingest.rs`: `CRUSTACIAN_INGEST_TOKEN` and `--bearer-token` now enable opt-in `Authorization: Bearer <token>` enforcement for `POST /v1/ingest`; missing or invalid tokens return HTTP `401`, `/health` remains open for liveness checks, docs describe the configuration, and tests cover no-token local mode plus missing, invalid, valid, and case-insensitive bearer headers. Verified with `cargo fmt --check`, `cargo test`, `cargo build`, and `cargo clippy --locked --bin crustacian-ingest -- -D warnings`.
 - Completed Stage 1 hygiene: confirmed `.mrgi` is ignored, normalized the tracked readme filename to `README.md` for MRGI compatibility, and selected exactly one next task.
 - Completed stricter ingest telemetry validation in `src/edr_transport.rs`: batch metadata now enforces minimum/non-empty values, endpoint events require the schema fields from `schemas/endpoint-event.schema.json`, boolean recommendation flags must be booleans, confidence must be 0..=1, event schema version is checked, and event endpoint IDs must match the batch endpoint ID. Verified with `cargo fmt --check`, `cargo test`, and `cargo build`.

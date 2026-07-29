@@ -230,7 +230,7 @@ Upcoming milestones include:
 * Enhanced logging (CSV, NDJSON, syslog integration)
 * SIEM-ready endpoint event schema validation
 * Dry-run SIEM/authentik/LDAP/containment readiness checks
-* Configurable retry policy and CI target checks
+* Configurable retry policy
 
 ### **Medium Term**
 
@@ -239,7 +239,6 @@ Upcoming milestones include:
 * Remote-report mode (print-only vs write-to-log modes)
 * Configurable retry policy through environment or endpoint config
 * Server-side ingest authorization policy for endpoint identity and replay protection
-* CI target matrix for Windows, Linux, and macOS checks
 * Optional syslog SIEM transport with authenticated delivery and retry queue
 * authentik/LDAP response connector in dry-run mode
 * Durable server queue and exporter workers for OpenSearch, Splunk HEC, Elastic, and Sentinel-compatible collectors
