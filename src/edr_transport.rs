@@ -1,5 +1,6 @@
+use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, BufRead, BufReader, Read, Write};
+use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::net::{Shutdown, TcpStream};
 use std::path::Path;
 use std::thread;
@@ -68,6 +69,73 @@ impl Default for RetryPolicy {
             max_backoff: Duration::from_secs(30),
             jitter: true,
         }
+    }
+}
+
+impl RetryPolicy {
+    pub fn from_env() -> io::Result<Self> {
+        Self::from_lookup(|key| std::env::var(key).ok())
+    }
+
+    fn from_lookup(mut lookup: impl FnMut(&str) -> Option<String>) -> io::Result<Self> {
+        let defaults = Self::default();
+        let max_attempts = parse_bounded_env(
+            &mut lookup,
+            "CRUSTACIAN_RETRY_MAX_ATTEMPTS",
+            defaults.max_attempts as u64,
+            1,
+            10,
+        )? as usize;
+        let initial_ms = parse_bounded_env(
+            &mut lookup,
+            "CRUSTACIAN_RETRY_INITIAL_BACKOFF_MS",
+            defaults.initial_backoff.as_millis() as u64,
+            100,
+            60_000,
+        )?;
+        let max_ms = parse_bounded_env(
+            &mut lookup,
+            "CRUSTACIAN_RETRY_MAX_BACKOFF_MS",
+            defaults.max_backoff.as_millis() as u64,
+            initial_ms,
+            300_000,
+        )?;
+        let jitter = match lookup("CRUSTACIAN_RETRY_JITTER") {
+            None => defaults.jitter,
+            Some(value) if value.eq_ignore_ascii_case("true") || value == "1" => true,
+            Some(value) if value.eq_ignore_ascii_case("false") || value == "0" => false,
+            Some(_) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "CRUSTACIAN_RETRY_JITTER must be true, false, 1, or 0",
+                ))
+            }
+        };
+        Ok(Self {
+            max_attempts,
+            initial_backoff: Duration::from_millis(initial_ms),
+            max_backoff: Duration::from_millis(max_ms),
+            jitter,
+        })
+    }
+}
+
+fn parse_bounded_env(
+    lookup: &mut impl FnMut(&str) -> Option<String>,
+    key: &str,
+    default: u64,
+    min: u64,
+    max: u64,
+) -> io::Result<u64> {
+    match lookup(key) {
+        None => Ok(default),
+        Some(value) => match value.parse::<u64>() {
+            Ok(number) if (min..=max).contains(&number) => Ok(number),
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("{key} must be between {min} and {max}"),
+            )),
+        },
     }
 }
 
@@ -186,6 +254,28 @@ pub fn send_spool_with_durable_retry(
     max_batch_events: usize,
     retry_policy: &RetryPolicy,
 ) -> io::Result<DeliveryReport> {
+    with_delivery_lock(spool_path, || {
+        send_spool_with_durable_retry_locked(
+            spool_path,
+            retry_state_path,
+            endpoint_id,
+            ingest_url,
+            bearer_token,
+            max_batch_events,
+            retry_policy,
+        )
+    })
+}
+
+fn send_spool_with_durable_retry_locked(
+    spool_path: &Path,
+    retry_state_path: &Path,
+    endpoint_id: &str,
+    ingest_url: &str,
+    bearer_token: Option<&str>,
+    max_batch_events: usize,
+    retry_policy: &RetryPolicy,
+) -> io::Result<DeliveryReport> {
     let schedule = read_retry_schedule(retry_state_path)?;
     if let Some(next_attempt_at) = schedule.next_attempt_at.as_deref() {
         if retry_not_due(next_attempt_at) {
@@ -205,20 +295,13 @@ pub fn send_spool_with_durable_retry(
         }
     }
 
-    let single_attempt_policy = RetryPolicy {
-        max_attempts: 1,
-        initial_backoff: retry_policy.initial_backoff,
-        max_backoff: retry_policy.max_backoff,
-        jitter: retry_policy.jitter,
-    };
-
-    match send_spool_with_retry(
+    match send_spool_with_retry_locked(
         spool_path,
         endpoint_id,
         ingest_url,
         bearer_token,
         max_batch_events,
-        &single_attempt_policy,
+        retry_policy,
     ) {
         Ok(mut report) => {
             if report.delivered_events > 0 || !is_retryable_status(report.status_code) {
@@ -265,8 +348,8 @@ pub fn send_spool_with_durable_retry(
                 delivered_events: 0,
                 retained_events: stats.queued_events,
                 status_code: 0,
-                transport_attempts: 1,
-                retry_attempts: 0,
+                transport_attempts: retry_policy.max_attempts.max(1),
+                retry_attempts: retry_policy.max_attempts.max(1).saturating_sub(1),
                 retry_delay_millis: 0,
                 retry_after_seconds: None,
                 next_retry_at: Some(next_retry_at),
@@ -277,6 +360,26 @@ pub fn send_spool_with_durable_retry(
 }
 
 pub fn send_spool_with_retry(
+    spool_path: &Path,
+    endpoint_id: &str,
+    ingest_url: &str,
+    bearer_token: Option<&str>,
+    max_batch_events: usize,
+    retry_policy: &RetryPolicy,
+) -> io::Result<DeliveryReport> {
+    with_delivery_lock(spool_path, || {
+        send_spool_with_retry_locked(
+            spool_path,
+            endpoint_id,
+            ingest_url,
+            bearer_token,
+            max_batch_events,
+            retry_policy,
+        )
+    })
+}
+
+fn send_spool_with_retry_locked(
     spool_path: &Path,
     endpoint_id: &str,
     ingest_url: &str,
@@ -343,8 +446,12 @@ pub fn send_spool_with_retry(
         .as_ref()
         .and_then(|response| response.retry_after_seconds);
 
-    if (200..300).contains(&status_code) {
-        remove_delivered_lines(spool_path, batch_lines.len())?;
+    let acknowledged = (200..300).contains(&status_code)
+        && ingest_response.as_ref().is_some_and(|response| {
+            response.accepted && response.accepted_events == batch_lines.len()
+        });
+    if acknowledged {
+        remove_delivered_lines(spool_path, &batch_lines)?;
         return Ok(DeliveryReport {
             attempted_events: batch_lines.len(),
             delivered_events: batch_lines.len(),
@@ -450,14 +557,80 @@ fn retry_delay_for_schedule(
     retry_delay_for_attempt(retry_policy, failed_attempt, None)
 }
 
-pub fn write_accepted_events(data_dir: &Path, batch: &IngestBatch) -> io::Result<()> {
+/// Persists new event IDs under a cross-process file lock. Replayed batches
+/// acknowledge already durable IDs without writing duplicate telemetry.
+pub fn write_accepted_events(data_dir: &Path, batch: &IngestBatch) -> io::Result<usize> {
     fs::create_dir_all(data_dir)?;
     let path = data_dir.join("telemetry.ndjson");
-    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
-    for event in &batch.events {
-        writeln!(file, "{event}")?;
+    let mut file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(path)?;
+    file.lock_exclusive()?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    let durable_len = bytes
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .map(|index| index + 1)
+        .unwrap_or(0);
+    if durable_len != bytes.len() {
+        file.set_len(durable_len as u64)?;
+        bytes.truncate(durable_len);
     }
-    Ok(())
+    let mut existing = HashSet::new();
+    for line in bytes
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty())
+    {
+        let value: Value = serde_json::from_slice(line).map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("existing telemetry contains invalid JSON: {error}"),
+            )
+        })?;
+        let id = value
+            .get("event_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "existing telemetry is missing event_id",
+                )
+            })?;
+        let endpoint = value
+            .get("endpoint_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "existing telemetry is missing endpoint_id",
+                )
+            })?;
+        existing.insert((endpoint.to_string(), id.to_string()));
+    }
+    file.seek(SeekFrom::End(0))?;
+    let mut newly_persisted = 0;
+    for event in &batch.events {
+        let id = event
+            .get("event_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "accepted event is missing event_id",
+                )
+            })?;
+        if existing.insert((batch.endpoint_id.clone(), id.to_string())) {
+            writeln!(file, "{event}")?;
+            newly_persisted += 1;
+        }
+    }
+    file.sync_data()?;
+    FileExt::unlock(&file)?;
+    Ok(newly_persisted)
 }
 
 pub fn validate_batch(batch: &IngestBatch, max_batch_events: usize) -> Result<(), String> {
@@ -487,6 +660,7 @@ pub fn validate_batch(batch: &IngestBatch, max_batch_events: usize) -> Result<()
         ));
     }
 
+    let mut event_ids = HashSet::new();
     for event in &batch.events {
         for field in [
             "schema_version",
@@ -514,8 +688,12 @@ pub fn validate_batch(batch: &IngestBatch, max_batch_events: usize) -> Result<()
         {
             return Err("event has unsupported schema_version".to_string());
         }
-        if require_string_field(event, "event_id")?.len() < 8 {
+        let event_id = require_string_field(event, "event_id")?;
+        if event_id.len() < 8 {
             return Err("event_id must be at least 8 characters".to_string());
+        }
+        if !event_ids.insert(event_id) {
+            return Err("batch contains duplicate event_id".to_string());
         }
         if event.get("endpoint_id").and_then(Value::as_str) != Some(batch.endpoint_id.as_str()) {
             return Err("event endpoint_id does not match batch endpoint_id".to_string());
@@ -567,12 +745,45 @@ fn read_spool_lines(spool_path: &Path) -> io::Result<Vec<String>> {
         .collect()
 }
 
-fn remove_delivered_lines(spool_path: &Path, delivered_count: usize) -> io::Result<()> {
+fn remove_delivered_lines(spool_path: &Path, delivered_lines: &[String]) -> io::Result<()> {
     with_spool_lock(spool_path, || {
         let lines = read_spool_lines(spool_path)?;
-        let remaining = lines.into_iter().skip(delivered_count).collect::<Vec<_>>();
+        if !lines.starts_with(delivered_lines) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "spool prefix changed after delivery; retained events for safe replay",
+            ));
+        }
+        let remaining = lines
+            .into_iter()
+            .skip(delivered_lines.len())
+            .collect::<Vec<_>>();
         replace_spool(spool_path, &remaining)
     })
+}
+
+fn with_delivery_lock<T>(
+    spool_path: &Path,
+    operation: impl FnOnce() -> io::Result<T>,
+) -> io::Result<T> {
+    let lock_path = spool_path.with_extension("ndjson.delivery.lock");
+    if let Some(parent) = lock_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let lock = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(lock_path)?;
+    lock.lock_exclusive()?;
+    let result = operation();
+    let unlock_result = FileExt::unlock(&lock);
+    match (result, unlock_result) {
+        (Err(error), _) => Err(error),
+        (Ok(_), Err(error)) => Err(error),
+        (Ok(value), Ok(())) => Ok(value),
+    }
 }
 
 fn with_spool_lock<T>(
@@ -857,6 +1068,160 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
+    fn retry_configuration_enforces_bounded_explicit_values() {
+        let policy = RetryPolicy::from_lookup(|key| match key {
+            "CRUSTACIAN_RETRY_MAX_ATTEMPTS" => Some("6".into()),
+            "CRUSTACIAN_RETRY_INITIAL_BACKOFF_MS" => Some("500".into()),
+            "CRUSTACIAN_RETRY_MAX_BACKOFF_MS" => Some("5000".into()),
+            "CRUSTACIAN_RETRY_JITTER" => Some("false".into()),
+            _ => None,
+        })
+        .unwrap();
+        assert_eq!(policy.max_attempts, 6);
+        assert_eq!(policy.initial_backoff, Duration::from_millis(500));
+        assert_eq!(policy.max_backoff, Duration::from_secs(5));
+        assert!(!policy.jitter);
+        assert!(RetryPolicy::from_lookup(
+            |key| (key == "CRUSTACIAN_RETRY_MAX_ATTEMPTS").then(|| "0".into())
+        )
+        .is_err());
+        assert!(RetryPolicy::from_lookup(
+            |key| (key == "CRUSTACIAN_RETRY_JITTER").then(|| "maybe".into())
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn incomplete_success_acknowledgement_retains_spool() {
+        let dir = test_temp_dir("partial-ack");
+        fs::create_dir_all(&dir).unwrap();
+        let spool_path = dir.join("spool.ndjson");
+        append_spool_event(&spool_path, &valid_test_batch().events[0].to_string()).unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = Vec::new();
+            stream.read_to_end(&mut request).unwrap();
+            let body = r#"{"accepted":true,"accepted_events":0,"message":"partial","retry_after_seconds":null,"max_batch_events":100}"#;
+            write!(
+                stream,
+                "HTTP/1.1 202 Accepted\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+        });
+        let report = send_spool_with_retry(
+            &spool_path,
+            "endpoint-1",
+            &format!("http://{address}/v1/ingest"),
+            None,
+            100,
+            &RetryPolicy {
+                max_attempts: 1,
+                ..RetryPolicy::default()
+            },
+        )
+        .unwrap();
+        server.join().unwrap();
+        assert_eq!(report.status_code, 202);
+        assert_eq!(report.delivered_events, 0);
+        assert_eq!(spool_stats(&spool_path).unwrap().queued_events, 1);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn durable_sender_uses_configured_immediate_attempts() {
+        let dir = test_temp_dir("configured-retries");
+        fs::create_dir_all(&dir).unwrap();
+        let spool_path = dir.join("spool.ndjson");
+        let retry_path = dir.join("retry.json");
+        append_spool_event(&spool_path, &valid_test_batch().events[0].to_string()).unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            for (status, accepted) in [(503, false), (202, true)] {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = Vec::new();
+                stream.read_to_end(&mut request).unwrap();
+                let body = format!(
+                    r#"{{"accepted":{accepted},"accepted_events":{},"message":"test","retry_after_seconds":null,"max_batch_events":100}}"#,
+                    usize::from(accepted)
+                );
+                write!(stream, "HTTP/1.1 {status} Test\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+            }
+        });
+        let report = send_spool_with_durable_retry(
+            &spool_path,
+            &retry_path,
+            "endpoint-1",
+            &format!("http://{address}/v1/ingest"),
+            None,
+            100,
+            &RetryPolicy {
+                max_attempts: 2,
+                initial_backoff: Duration::ZERO,
+                max_backoff: Duration::ZERO,
+                jitter: false,
+            },
+        )
+        .unwrap();
+        server.join().unwrap();
+        assert_eq!(report.transport_attempts, 2);
+        assert_eq!(report.delivered_events, 1);
+        assert!(!retry_path.exists());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn ingest_replay_deduplicates_durable_event_ids() {
+        let dir = test_temp_dir("ingest-replay");
+        let mut batch = valid_test_batch();
+        assert_eq!(write_accepted_events(&dir, &batch).unwrap(), 1);
+        assert_eq!(write_accepted_events(&dir, &batch).unwrap(), 0);
+        batch.events[0]["event_id"] = json!("event-0002");
+        assert_eq!(write_accepted_events(&dir, &batch).unwrap(), 1);
+        let mut other_endpoint = valid_test_batch();
+        other_endpoint.endpoint_id = "endpoint-2".to_string();
+        other_endpoint.events[0]["endpoint_id"] = json!("endpoint-2");
+        assert_eq!(write_accepted_events(&dir, &other_endpoint).unwrap(), 1);
+        assert_eq!(
+            fs::read_to_string(dir.join("telemetry.ndjson"))
+                .unwrap()
+                .lines()
+                .count(),
+            3
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn ingest_repairs_unterminated_tail_before_retry() {
+        let dir = test_temp_dir("ingest-tail");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("telemetry.ndjson"),
+            b"{\"endpoint_id\":\"endpoint-1\",\"event_id\":\"older-event\"}\n{\"event_id\":",
+        )
+        .unwrap();
+        assert_eq!(write_accepted_events(&dir, &valid_test_batch()).unwrap(), 1);
+        let lines = fs::read_to_string(dir.join("telemetry.ndjson")).unwrap();
+        assert_eq!(lines.lines().count(), 2);
+        assert!(lines.ends_with('\n'));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn duplicate_event_ids_in_one_batch_are_rejected() {
+        let mut batch = valid_test_batch();
+        batch.events.push(batch.events[0].clone());
+        assert_eq!(
+            validate_batch(&batch, 10),
+            Err("batch contains duplicate event_id".to_string())
+        );
+    }
+
+    #[test]
     fn parses_http_url_with_default_path() {
         let target = parse_http_url("http://127.0.0.1:8080").unwrap();
         assert_eq!(target.scheme, "http");
@@ -1030,7 +1395,11 @@ mod tests {
         append_spool_event(&spool_path, r#"{"event":2}"#).unwrap();
         append_spool_event(&spool_path, r#"{"event":3}"#).unwrap();
 
-        remove_delivered_lines(&spool_path, 2).unwrap();
+        remove_delivered_lines(
+            &spool_path,
+            &[r#"{"event":1}"#.into(), r#"{"event":2}"#.into()],
+        )
+        .unwrap();
 
         assert_eq!(
             read_spool_lines(&spool_path).unwrap(),
@@ -1041,6 +1410,19 @@ mod tests {
             .file_name()
             .to_string_lossy()
             .ends_with(".tmp")));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn changed_spool_prefix_is_retained_for_replay() {
+        let dir = test_temp_dir("changed-prefix");
+        fs::create_dir_all(&dir).unwrap();
+        let spool_path = dir.join("spool.ndjson");
+        append_spool_event(&spool_path, r#"{"event":1}"#).unwrap();
+        append_spool_event(&spool_path, r#"{"event":2}"#).unwrap();
+        let error = remove_delivered_lines(&spool_path, &[r#"{"event":0}"#.into()]).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(spool_stats(&spool_path).unwrap().queued_events, 2);
         let _ = fs::remove_dir_all(dir);
     }
 

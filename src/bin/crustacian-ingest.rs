@@ -5,10 +5,13 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
+use std::time::Duration;
 
 use crustacian::edr_transport::{
     validate_batch, write_accepted_events, IngestBatch, IngestResponse,
 };
+
+const MAX_REQUEST_BODY_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Clone)]
 struct ServerConfig {
@@ -107,6 +110,8 @@ fn handle_connection(
     config: ServerConfig,
     in_flight: Arc<AtomicUsize>,
 ) -> io::Result<()> {
+    stream.set_read_timeout(Some(Duration::from_secs(15)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(15)))?;
     let active = in_flight.fetch_add(1, Ordering::SeqCst);
     if active >= config.max_in_flight {
         in_flight.fetch_sub(1, Ordering::SeqCst);
@@ -121,7 +126,25 @@ fn handle_connection(
     }
     let _guard = InFlightGuard::new(in_flight);
 
-    let request = read_http_request(&mut stream)?;
+    let request = match read_http_request(&mut stream) {
+        Ok(request) => request,
+        Err(error) if error.kind() == io::ErrorKind::InvalidData => {
+            let status = if error.to_string().contains("body exceeds") {
+                413
+            } else {
+                400
+            };
+            let response = IngestResponse {
+                accepted: false,
+                accepted_events: 0,
+                message: error.to_string(),
+                retry_after_seconds: None,
+                max_batch_events: Some(config.max_batch_events),
+            };
+            return write_json_response(&mut stream, status, &response);
+        }
+        Err(error) => return Err(error),
+    };
     let request_text = String::from_utf8_lossy(&request);
     let request_line = request_text.lines().next().unwrap_or_default();
 
@@ -183,11 +206,11 @@ fn handle_connection(
         return write_json_response(&mut stream, 400, &response);
     }
 
-    write_accepted_events(&config.data_dir, &batch)?;
+    let newly_persisted = write_accepted_events(&config.data_dir, &batch)?;
     let response = IngestResponse {
         accepted: true,
         accepted_events: batch.events.len(),
-        message: "batch accepted".to_string(),
+        message: format!("batch accepted; {newly_persisted} new events persisted"),
         retry_after_seconds: None,
         max_batch_events: Some(config.max_batch_events),
     };
@@ -272,17 +295,7 @@ fn read_http_request(stream: &mut TcpStream) -> io::Result<Vec<u8>> {
     }
 
     let header_text = String::from_utf8_lossy(&request);
-    let content_length = header_text
-        .lines()
-        .find_map(|line| {
-            let (name, value) = line.split_once(':')?;
-            if name.eq_ignore_ascii_case("content-length") {
-                value.trim().parse::<usize>().ok()
-            } else {
-                None
-            }
-        })
-        .unwrap_or(0);
+    let content_length = parse_content_length(&header_text)?;
 
     let mut body = vec![0_u8; content_length];
     if content_length > 0 {
@@ -291,6 +304,34 @@ fn read_http_request(stream: &mut TcpStream) -> io::Result<Vec<u8>> {
     }
 
     Ok(request)
+}
+
+fn parse_content_length(headers: &str) -> io::Result<usize> {
+    let mut length = None;
+    for line in headers.lines() {
+        let Some((name, value)) = line.split_once(':') else {
+            continue;
+        };
+        if name.eq_ignore_ascii_case("content-length") {
+            if length.is_some() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "duplicate Content-Length header",
+                ));
+            }
+            let parsed = value.trim().parse::<usize>().map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidData, "invalid Content-Length header")
+            })?;
+            if parsed > MAX_REQUEST_BODY_BYTES {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "request body exceeds 8 MiB limit",
+                ));
+            }
+            length = Some(parsed);
+        }
+    }
+    Ok(length.unwrap_or(0))
 }
 
 fn write_json_response<T: serde::Serialize>(
@@ -305,6 +346,7 @@ fn write_json_response<T: serde::Serialize>(
         400 => "Bad Request",
         404 => "Not Found",
         429 => "Too Many Requests",
+        413 => "Payload Too Large",
         _ => "Internal Server Error",
     };
     let body = serde_json::to_vec(body)?;
@@ -405,5 +447,16 @@ mod tests {
             "POST /v1/ingest HTTP/1.1\r\n\r\n{}",
             Some("  ")
         ));
+    }
+
+    #[test]
+    fn request_body_limit_rejects_oversized_and_ambiguous_lengths() {
+        assert_eq!(
+            parse_content_length("Content-Length: 1024\r\n").unwrap(),
+            1024
+        );
+        assert!(parse_content_length("Content-Length: 8388609\r\n").is_err());
+        assert!(parse_content_length("Content-Length: 1\r\ncontent-length: 2\r\n").is_err());
+        assert!(parse_content_length("Content-Length: not-a-number\r\n").is_err());
     }
 }

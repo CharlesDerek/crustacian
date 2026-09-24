@@ -40,7 +40,8 @@ Crustacian is designed for **individuals, developers, sysadmins, SOC teams, and 
 | **Endpoint R&D Telemetry**  | Local NDJSON event spool, endpoint snapshots, dry-run integration checks, response plan drafts, and ingest shipping |
 | **Server-Side Ingest**      | `crustacian-ingest` accepts endpoint batches and persists telemetry NDJSON |
 | **Backpressure Controls**   | Server returns `429` with retry/max-batch hints; endpoint schedules retry with backoff and retains spool |
-| **Crash-safe Spooling**     | Producer/acknowledgement locking, synced appends, and atomic-prefix compaction prevent accepted or newly queued telemetry from being silently lost |
+| **Crash-safe Spooling**     | Producer/acknowledgement locking, synced appends, and atomic-prefix compaction protect queued telemetry |
+| **Replay-safe Ingest**      | Durable event IDs are deduplicated under a file lock; incomplete trailing records are repaired before retry |
 | **Config Management**       | Auto-generates safe default ClamAV and FreshClam configs                |
 | **Extensible Architecture** | Designed for future modules (scheduling, remote scanning, local agents) |
 
@@ -125,11 +126,31 @@ When `CRUSTACIAN_INGEST_TOKEN` or `--bearer-token` is configured, ingest
 requests must include `Authorization: Bearer <token>`. `GET /health` remains
 available for local liveness checks.
 
+Endpoint retry settings are optional environment variables:
+`CRUSTACIAN_RETRY_MAX_ATTEMPTS` (1–10, default 4),
+`CRUSTACIAN_RETRY_INITIAL_BACKOFF_MS` (100–60000, default 1000),
+`CRUSTACIAN_RETRY_MAX_BACKOFF_MS` (at least the initial delay, at most 300000,
+default 30000), and `CRUSTACIAN_RETRY_JITTER` (`true`/`false` or `1`/`0`,
+default true). Invalid settings stop delivery with a clear error. A successful
+HTTP status only removes queued events when the server confirms accepting the
+entire batch. The durable sender uses the configured number of immediate
+attempts before recording the next retry time.
+
 Accepted telemetry is persisted as:
 
 ```text
 target/crustacian-ingest/telemetry.ndjson
 ```
+
+The ingest server scans existing endpoint/event ID pairs before appending under
+an exclusive file lock. Replayed events are acknowledged without duplicate records. This
+simple file-backed index requires time proportional to the stored NDJSON size;
+larger deployments should replace it with a transactional indexed store.
+Endpoint senders serialize delivery attempts for the same spool and check the
+acknowledged prefix before compaction; concurrent producers may continue
+appending while a batch is in flight.
+The ingest listener caps HTTP bodies at 8 MiB, rejects ambiguous content
+lengths, and times out slow connections after 15 seconds.
 
 ### **Running a scan directly (non-interactive)**
 

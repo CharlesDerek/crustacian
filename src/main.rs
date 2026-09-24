@@ -1445,6 +1445,13 @@ fn ship_telemetry_spool_menu() {
     flush_stdout();
     let max_batch_events = read_line().parse::<usize>().unwrap_or(100);
     let token = std::env::var("CRUSTACIAN_INGEST_TOKEN").ok();
+    let retry_policy = match edr_transport::RetryPolicy::from_env() {
+        Ok(policy) => policy,
+        Err(error) => {
+            eprintln!("[!] Invalid ingest retry configuration: {error}");
+            return;
+        }
+    };
 
     match edr_transport::send_spool_with_durable_retry(
         &siem_spool_path(),
@@ -1453,7 +1460,7 @@ fn ship_telemetry_spool_menu() {
         &ingest_url,
         token.as_deref(),
         max_batch_events,
-        &edr_transport::RetryPolicy::default(),
+        &retry_policy,
     ) {
         Ok(report) => {
             println!("Ingest status: HTTP {}", report.status_code);
