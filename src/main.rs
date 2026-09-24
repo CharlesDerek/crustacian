@@ -1403,12 +1403,7 @@ fn write_integration_dry_run(reason: &str) -> io::Result<PathBuf> {
 
 fn append_siem_spool(payload: &str) -> io::Result<()> {
     let path = endpoint_state_dir().join("siem-spool.ndjson");
-    let mut file = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)?;
-    writeln!(file, "{payload}")?;
-    Ok(())
+    edr_transport::append_spool_event(&path, payload)
 }
 
 fn siem_spool_path() -> PathBuf {

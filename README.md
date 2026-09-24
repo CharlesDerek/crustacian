@@ -40,6 +40,7 @@ Crustacian is designed for **individuals, developers, sysadmins, SOC teams, and 
 | **Endpoint R&D Telemetry**  | Local NDJSON event spool, endpoint snapshots, dry-run integration checks, response plan drafts, and ingest shipping |
 | **Server-Side Ingest**      | `crustacian-ingest` accepts endpoint batches and persists telemetry NDJSON |
 | **Backpressure Controls**   | Server returns `429` with retry/max-batch hints; endpoint schedules retry with backoff and retains spool |
+| **Crash-safe Spooling**     | Producer/acknowledgement locking, synced appends, and atomic-prefix compaction prevent accepted or newly queued telemetry from being silently lost |
 | **Config Management**       | Auto-generates safe default ClamAV and FreshClam configs                |
 | **Extensible Architecture** | Designed for future modules (scheduling, remote scanning, local agents) |
 

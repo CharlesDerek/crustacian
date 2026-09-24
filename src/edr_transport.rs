@@ -5,6 +5,7 @@ use std::path::Path;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -139,12 +140,24 @@ pub fn append_transport_event(
         "evidence": message
     });
 
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(spool_path)?;
-    writeln!(file, "{event}")?;
-    Ok(())
+    append_spool_event(spool_path, &event.to_string())
+}
+
+/// Appends one already-serialized event under the same advisory lock used by
+/// acknowledgement compaction. This prevents a successful delivery from
+/// racing a producer and dropping the newly appended tail.
+pub fn append_spool_event(spool_path: &Path, event: &str) -> io::Result<()> {
+    with_spool_lock(spool_path, || {
+        if let Some(parent) = spool_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(spool_path)?;
+        writeln!(file, "{event}")?;
+        file.sync_data()
+    })
 }
 
 pub fn send_spool(
@@ -555,12 +568,51 @@ fn read_spool_lines(spool_path: &Path) -> io::Result<Vec<String>> {
 }
 
 fn remove_delivered_lines(spool_path: &Path, delivered_count: usize) -> io::Result<()> {
-    let lines = read_spool_lines(spool_path)?;
-    let remaining = lines.into_iter().skip(delivered_count).collect::<Vec<_>>();
-    let mut file = File::create(spool_path)?;
-    for line in remaining {
-        writeln!(file, "{line}")?;
+    with_spool_lock(spool_path, || {
+        let lines = read_spool_lines(spool_path)?;
+        let remaining = lines.into_iter().skip(delivered_count).collect::<Vec<_>>();
+        replace_spool(spool_path, &remaining)
+    })
+}
+
+fn with_spool_lock<T>(
+    spool_path: &Path,
+    operation: impl FnOnce() -> io::Result<T>,
+) -> io::Result<T> {
+    let lock_path = spool_path.with_extension("ndjson.lock");
+    if let Some(parent) = lock_path.parent() {
+        fs::create_dir_all(parent)?;
     }
+    let lock = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(lock_path)?;
+    lock.lock_exclusive()?;
+    let result = operation();
+    let unlock_result = FileExt::unlock(&lock);
+    match (result, unlock_result) {
+        (Err(error), _) => Err(error),
+        (Ok(_), Err(error)) => Err(error),
+        (Ok(value), Ok(())) => Ok(value),
+    }
+}
+
+fn replace_spool(spool_path: &Path, lines: &[String]) -> io::Result<()> {
+    let parent = spool_path.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)?;
+    let mut temp = tempfile::Builder::new()
+        .prefix(".crustacian-spool-")
+        .suffix(".tmp")
+        .tempfile_in(parent)?;
+    for line in lines {
+        writeln!(temp, "{line}")?;
+    }
+    temp.as_file().sync_all()?;
+    temp.persist(spool_path).map_err(|error| error.error)?;
+    #[cfg(unix)]
+    File::open(parent)?.sync_all()?;
     Ok(())
 }
 
@@ -966,6 +1018,29 @@ mod tests {
         assert_eq!(report.retained_events, 1);
         assert_eq!(report.next_retry_at, Some(next_attempt_at));
 
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn acknowledged_prefix_is_replaced_durably_without_losing_tail() {
+        let dir = test_temp_dir("atomic-spool-compaction");
+        fs::create_dir_all(&dir).unwrap();
+        let spool_path = dir.join("spool.ndjson");
+        append_spool_event(&spool_path, r#"{"event":1}"#).unwrap();
+        append_spool_event(&spool_path, r#"{"event":2}"#).unwrap();
+        append_spool_event(&spool_path, r#"{"event":3}"#).unwrap();
+
+        remove_delivered_lines(&spool_path, 2).unwrap();
+
+        assert_eq!(
+            read_spool_lines(&spool_path).unwrap(),
+            vec![r#"{"event":3}"#]
+        );
+        assert!(fs::read_dir(&dir).unwrap().all(|entry| !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .ends_with(".tmp")));
         let _ = fs::remove_dir_all(dir);
     }
 
