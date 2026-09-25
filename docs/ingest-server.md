@@ -33,11 +33,26 @@ Authorization: Bearer <token>
 Requests missing the configured token, or using a different token, receive HTTP
 `401`. `GET /health` does not require the bearer token.
 
-Accepted events are appended to:
+Accepted events are committed to:
 
 ```text
-target/crustacian-ingest/telemetry.ndjson
+target/crustacian-ingest/telemetry.sqlite3
 ```
+
+The `(endpoint_id, event_id)` primary key deduplicates replayed batches. The
+server acknowledges only after the transaction commits. `GET /health` checks
+the database and reports `durable_events`; it returns 503 if the store cannot
+be opened. Existing `telemetry.ndjson` files require an explicit import:
+
+```bash
+cargo run --bin crustacian-ingest -- --import-legacy target/crustacian-ingest --dry-run
+cargo run --bin crustacian-ingest -- --import-legacy target/crustacian-ingest
+```
+
+The importer emits JSON counts for valid, duplicate, malformed, and imported
+records. It leaves the source file intact and commits nothing when malformed
+records are present. Keep a copy of the legacy file until the counts are
+reviewed.
 
 ## Backpressure
 
@@ -65,7 +80,7 @@ returns immediately until the saved next-attempt timestamp is due.
 - Disabled response-plan records for identity and containment review
 - HTTP/HTTPS batch ingest sender with optional bearer-token header
 - Optional server-side bearer-token validation for protected ingest intake
-- Server-side NDJSON telemetry persistence
+- Server-side transactional SQLite telemetry persistence
 
 ## Planned Exporters
 

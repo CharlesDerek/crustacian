@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, TcpStream};
 use std::path::Path;
 use std::thread;
@@ -557,80 +557,9 @@ fn retry_delay_for_schedule(
     retry_delay_for_attempt(retry_policy, failed_attempt, None)
 }
 
-/// Persists new event IDs under a cross-process file lock. Replayed batches
-/// acknowledge already durable IDs without writing duplicate telemetry.
+/// Accepts an entire batch only after an indexed SQLite transaction commits.
 pub fn write_accepted_events(data_dir: &Path, batch: &IngestBatch) -> io::Result<usize> {
-    fs::create_dir_all(data_dir)?;
-    let path = data_dir.join("telemetry.ndjson");
-    let mut file = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(path)?;
-    file.lock_exclusive()?;
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)?;
-    let durable_len = bytes
-        .iter()
-        .rposition(|byte| *byte == b'\n')
-        .map(|index| index + 1)
-        .unwrap_or(0);
-    if durable_len != bytes.len() {
-        file.set_len(durable_len as u64)?;
-        bytes.truncate(durable_len);
-    }
-    let mut existing = HashSet::new();
-    for line in bytes
-        .split(|byte| *byte == b'\n')
-        .filter(|line| !line.is_empty())
-    {
-        let value: Value = serde_json::from_slice(line).map_err(|error| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("existing telemetry contains invalid JSON: {error}"),
-            )
-        })?;
-        let id = value
-            .get("event_id")
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "existing telemetry is missing event_id",
-                )
-            })?;
-        let endpoint = value
-            .get("endpoint_id")
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "existing telemetry is missing endpoint_id",
-                )
-            })?;
-        existing.insert((endpoint.to_string(), id.to_string()));
-    }
-    file.seek(SeekFrom::End(0))?;
-    let mut newly_persisted = 0;
-    for event in &batch.events {
-        let id = event
-            .get("event_id")
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "accepted event is missing event_id",
-                )
-            })?;
-        if existing.insert((batch.endpoint_id.clone(), id.to_string())) {
-            writeln!(file, "{event}")?;
-            newly_persisted += 1;
-        }
-    }
-    file.sync_data()?;
-    FileExt::unlock(&file)?;
-    Ok(newly_persisted)
+    crate::ingest_store::write_accepted_events(data_dir, batch)
 }
 
 pub fn validate_batch(batch: &IngestBatch, max_batch_events: usize) -> Result<(), String> {
@@ -1185,18 +1114,12 @@ mod tests {
         other_endpoint.endpoint_id = "endpoint-2".to_string();
         other_endpoint.events[0]["endpoint_id"] = json!("endpoint-2");
         assert_eq!(write_accepted_events(&dir, &other_endpoint).unwrap(), 1);
-        assert_eq!(
-            fs::read_to_string(dir.join("telemetry.ndjson"))
-                .unwrap()
-                .lines()
-                .count(),
-            3
-        );
+        assert_eq!(crate::ingest_store::event_count(&dir).unwrap(), 3);
         let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
-    fn ingest_repairs_unterminated_tail_before_retry() {
+    fn ingest_requires_explicit_legacy_import() {
         let dir = test_temp_dir("ingest-tail");
         fs::create_dir_all(&dir).unwrap();
         fs::write(
@@ -1204,10 +1127,10 @@ mod tests {
             b"{\"endpoint_id\":\"endpoint-1\",\"event_id\":\"older-event\"}\n{\"event_id\":",
         )
         .unwrap();
-        assert_eq!(write_accepted_events(&dir, &valid_test_batch()).unwrap(), 1);
-        let lines = fs::read_to_string(dir.join("telemetry.ndjson")).unwrap();
-        assert_eq!(lines.lines().count(), 2);
-        assert!(lines.ends_with('\n'));
+        assert!(write_accepted_events(&dir, &valid_test_batch()).is_err());
+        let stats = crate::ingest_store::import_legacy(&dir, false).unwrap();
+        assert_eq!(stats.malformed, 1);
+        assert!(!dir.join("telemetry.sqlite3").exists());
         let _ = fs::remove_dir_all(dir);
     }
 

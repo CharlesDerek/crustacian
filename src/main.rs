@@ -21,6 +21,10 @@ const DEFAULT_CLAM_DIR: &str = r"C:\Program Files\ClamAV";
 const DEFAULT_CLAM_DIR: &str = "/etc/clamav";
 
 fn main() {
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    if !args.is_empty() {
+        std::process::exit(automation_command(&args));
+    }
     loop {
         let selected = select_from_menu(
             "Main Console",
@@ -45,6 +49,124 @@ fn main() {
                 break;
             }
             _ => {}
+        }
+    }
+}
+
+fn automation_command(args: &[String]) -> i32 {
+    let json = args.iter().any(|arg| arg == "--json");
+    let outcome: io::Result<(String, serde_json::Value, i32)> = (|| match args[0].as_str() {
+        "telemetry-status" => {
+            let stats = edr_transport::spool_stats(&siem_spool_path())?;
+            Ok((
+                "telemetry_status".into(),
+                serde_json::json!({"queued_events":stats.queued_events,"disk_bytes":stats.disk_bytes}),
+                0,
+            ))
+        }
+        "ship" => {
+            let url = std::env::var("CRUSTACIAN_INGEST_URL")
+                .unwrap_or_else(|_| "http://127.0.0.1:8080/v1/ingest".into());
+            let token = std::env::var("CRUSTACIAN_INGEST_TOKEN").ok();
+            let policy = edr_transport::RetryPolicy::from_env()?;
+            let report = edr_transport::send_spool_with_durable_retry(
+                &siem_spool_path(),
+                &siem_retry_state_path(),
+                &endpoint_id(),
+                &url,
+                token.as_deref(),
+                100,
+                &policy,
+            )?;
+            let code = if report.delivered_events == report.attempted_events {
+                0
+            } else {
+                20
+            };
+            Ok((
+                "ship".into(),
+                serde_json::json!({"attempted":report.attempted_events,"delivered":report.delivered_events,"retained":report.retained_events,"http_status":report.status_code,"next_retry_at":report.next_retry_at}),
+                code,
+            ))
+        }
+        "scan" => {
+            let position = args.iter().position(|arg| arg == "--path").ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "scan requires --path")
+            })?;
+            let path = args
+                .get(position + 1)
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "scan path missing"))?;
+            if !Path::new(path).exists() {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "scan path does not exist",
+                ));
+            }
+            let binary = if cfg!(windows) {
+                "clamscan.exe"
+            } else {
+                "clamscan"
+            };
+            let status = Command::new(binary)
+                .args(["--no-summary", "--recursive", "--infected", "--", path])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()?;
+            let code = match status.code() {
+                Some(0) => 0,
+                Some(1) => 10,
+                _ => 20,
+            };
+            Ok((
+                "scan".into(),
+                serde_json::json!({"result":if code == 0 {"clean"} else if code == 10 {"infected"} else {"error"},"exit_code":code}),
+                code,
+            ))
+        }
+        "signature-update" => {
+            let binary = if cfg!(windows) {
+                "freshclam.exe"
+            } else {
+                "freshclam"
+            };
+            let status = Command::new(binary)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()?;
+            let code = if status.success() { 0 } else { 20 };
+            Ok((
+                "signature_update".into(),
+                serde_json::json!({"success":code == 0}),
+                code,
+            ))
+        }
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "usage: crustacian telemetry-status|ship|scan --path PATH|signature-update [--json]",
+        )),
+    })();
+    match outcome {
+        Ok((operation, data, code)) => {
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({"schema_version":"crustacian.cli.v1","operation":operation,"data":data})
+                );
+            } else {
+                println!("{operation}: {data}");
+            }
+            code
+        }
+        Err(error) => {
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({"schema_version":"crustacian.cli.v1","error":error.to_string()})
+                );
+            } else {
+                eprintln!("{error}");
+            }
+            20
         }
     }
 }

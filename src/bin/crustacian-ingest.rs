@@ -24,6 +24,25 @@ struct ServerConfig {
 }
 
 fn main() -> io::Result<()> {
+    let args = env::args().collect::<Vec<_>>();
+    if args.get(1).map(String::as_str) == Some("--import-legacy") {
+        let dir = args.get(2).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "usage: crustacian-ingest --import-legacy DATA_DIR [--dry-run]",
+            )
+        })?;
+        let dry_run = args.iter().any(|arg| arg == "--dry-run");
+        let stats = crustacian::ingest_store::import_legacy(std::path::Path::new(dir), dry_run)?;
+        println!("{}", serde_json::to_string(&stats)?);
+        if stats.malformed > 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "legacy telemetry contains malformed entries; no events imported",
+            ));
+        }
+        return Ok(());
+    }
     let config = parse_args();
     let listener = TcpListener::bind(&config.bind)?;
     println!("Crustacian ingest server listening on {}", config.bind);
@@ -124,7 +143,7 @@ fn handle_connection(
         };
         return write_json_response(&mut stream, 429, &response);
     }
-    let _guard = InFlightGuard::new(in_flight);
+    let _guard = InFlightGuard::new(Arc::clone(&in_flight));
 
     let request = match read_http_request(&mut stream) {
         Ok(request) => request,
@@ -149,13 +168,15 @@ fn handle_connection(
     let request_line = request_text.lines().next().unwrap_or_default();
 
     if request_line.starts_with("GET /health ") {
+        let store = crustacian::ingest_store::event_count(&config.data_dir);
         let body = serde_json::json!({
-            "status": "ok",
+            "status": if store.is_ok() { "ok" } else { "degraded" },
+            "durable_events": store.as_ref().ok(),
             "max_batch_events": config.max_batch_events,
             "max_in_flight": config.max_in_flight,
-            "in_flight": 0
+            "in_flight": in_flight.load(Ordering::SeqCst)
         });
-        return write_json_response(&mut stream, 200, &body);
+        return write_json_response(&mut stream, if store.is_ok() { 200 } else { 503 }, &body);
     }
 
     if !request_line.starts_with("POST /v1/ingest ") {

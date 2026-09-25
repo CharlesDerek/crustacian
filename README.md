@@ -31,7 +31,7 @@ Crustacian is designed for **individuals, developers, sysadmins, SOC teams, and 
 
 | Capability                  | Description                                                             |
 | --------------------------- | ----------------------------------------------------------------------- |
-| **Cross-Platform**          | Works on Windows, macOS, and Linux distributions                        |
+| **Cross-Platform**          | Rust CI covers Windows, macOS, and Linux; ClamAV install and service behavior still varies by OS |
 | **Installer Helper**        | Assists in installing ClamAV (local package managers or manual paths)   |
 | **Signature Management**    | Runs FreshClam updates automatically or on demand                       |
 | **Interactive Scan CLI**    | Quick / full / folder-targeted scans                                    |
@@ -41,7 +41,7 @@ Crustacian is designed for **individuals, developers, sysadmins, SOC teams, and 
 | **Server-Side Ingest**      | `crustacian-ingest` accepts endpoint batches and persists telemetry NDJSON |
 | **Backpressure Controls**   | Server returns `429` with retry/max-batch hints; endpoint schedules retry with backoff and retains spool |
 | **Crash-safe Spooling**     | Producer/acknowledgement locking, synced appends, and atomic-prefix compaction protect queued telemetry |
-| **Replay-safe Ingest**      | Durable event IDs are deduplicated under a file lock; incomplete trailing records are repaired before retry |
+| **Replay-safe Ingest**      | SQLite transactions and a composite primary key deduplicate endpoint/event IDs before acknowledgement |
 | **Config Management**       | Auto-generates safe default ClamAV and FreshClam configs                |
 | **Extensible Architecture** | Designed for future modules (scheduling, remote scanning, local agents) |
 
@@ -139,13 +139,21 @@ attempts before recording the next retry time.
 Accepted telemetry is persisted as:
 
 ```text
-target/crustacian-ingest/telemetry.ndjson
+target/crustacian-ingest/telemetry.sqlite3
 ```
 
-The ingest server scans existing endpoint/event ID pairs before appending under
-an exclusive file lock. Replayed events are acknowledged without duplicate records. This
-simple file-backed index requires time proportional to the stored NDJSON size;
-larger deployments should replace it with a transactional indexed store.
+The ingest server commits a batch in an SQLite transaction before acknowledging
+it. Replays with the same event body are acknowledged without a second row;
+reuse of an endpoint/event ID with a different body is rejected. The indexed
+primary key keeps deduplication independent of history scans.
+If `telemetry.ndjson` exists and no database has been created, ingest refuses
+new writes until the legacy file is imported. The importer leaves that file in
+place and refuses to commit if it finds malformed lines:
+
+```bash
+crustacian-ingest --import-legacy target/crustacian-ingest --dry-run
+crustacian-ingest --import-legacy target/crustacian-ingest
+```
 Endpoint senders serialize delivery attempts for the same spool and check the
 acknowledged prefix before compaction; concurrent producers may continue
 appending while a batch is in flight.
@@ -154,13 +162,18 @@ lengths, and times out slow connections after 15 seconds.
 
 ### **Running a scan directly (non-interactive)**
 
-*(Planned — see Roadmap)*
+```bash
+crustacian telemetry-status --json
+crustacian ship --json
+crustacian scan --path /path/to/check --json
+crustacian signature-update --json
+```
 
-```
-crustacian scan --path /home/user/downloads
-crustacian scan --quick
-crustacian scan --full
-```
+The scan command is report-only and calls the local `clamscan` binary. Exit
+status 0 means success or clean, 10 means malware found, and 20 means an
+operational error. `ship` reads `CRUSTACIAN_INGEST_URL` and the optional token
+from the environment; it exits 20 if an attempted batch was not fully
+acknowledged. These commands do not install ClamAV or perform quarantine/delete.
 
 ---
 
