@@ -2,7 +2,7 @@ use std::env;
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -12,6 +12,10 @@ use crustacian::edr_transport::{
 };
 
 const MAX_REQUEST_BODY_BYTES: usize = 8 * 1024 * 1024;
+static ACCEPTED: AtomicU64 = AtomicU64::new(0);
+static DUPLICATE: AtomicU64 = AtomicU64::new(0);
+static REJECTED: AtomicU64 = AtomicU64::new(0);
+static MALFORMED: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone)]
 struct ServerConfig {
@@ -148,6 +152,7 @@ fn handle_connection(
     let request = match read_http_request(&mut stream) {
         Ok(request) => request,
         Err(error) if error.kind() == io::ErrorKind::InvalidData => {
+            MALFORMED.fetch_add(1, Ordering::Relaxed);
             let status = if error.to_string().contains("body exceeds") {
                 413
             } else {
@@ -172,6 +177,10 @@ fn handle_connection(
         let body = serde_json::json!({
             "status": if store.is_ok() { "ok" } else { "degraded" },
             "durable_events": store.as_ref().ok(),
+            "accepted_events": ACCEPTED.load(Ordering::Relaxed),
+            "duplicate_events": DUPLICATE.load(Ordering::Relaxed),
+            "rejected_requests": REJECTED.load(Ordering::Relaxed),
+            "malformed_requests": MALFORMED.load(Ordering::Relaxed),
             "max_batch_events": config.max_batch_events,
             "max_in_flight": config.max_in_flight,
             "in_flight": in_flight.load(Ordering::SeqCst)
@@ -191,6 +200,7 @@ fn handle_connection(
     }
 
     if !authorized_ingest_request(&request_text, config.bearer_token.as_deref()) {
+        REJECTED.fetch_add(1, Ordering::Relaxed);
         let response = IngestResponse {
             accepted: false,
             accepted_events: 0,
@@ -205,6 +215,7 @@ fn handle_connection(
     let batch = match serde_json::from_slice::<IngestBatch>(body) {
         Ok(batch) => batch,
         Err(error) => {
+            MALFORMED.fetch_add(1, Ordering::Relaxed);
             let response = IngestResponse {
                 accepted: false,
                 accepted_events: 0,
@@ -217,6 +228,7 @@ fn handle_connection(
     };
 
     if let Err(error) = validate_batch(&batch, config.max_batch_events) {
+        REJECTED.fetch_add(1, Ordering::Relaxed);
         let response = IngestResponse {
             accepted: false,
             accepted_events: 0,
@@ -227,7 +239,32 @@ fn handle_connection(
         return write_json_response(&mut stream, 400, &response);
     }
 
-    let newly_persisted = write_accepted_events(&config.data_dir, &batch)?;
+    let newly_persisted = match write_accepted_events(&config.data_dir, &batch) {
+        Ok(count) => count,
+        Err(error) => {
+            REJECTED.fetch_add(1, Ordering::Relaxed);
+            let conflict = error.kind() == io::ErrorKind::InvalidData
+                && error.to_string().contains("event ID reused");
+            let response = IngestResponse {
+                accepted: false,
+                accepted_events: 0,
+                message: if conflict {
+                    "event ID conflict"
+                } else {
+                    "durable store unavailable"
+                }
+                .into(),
+                retry_after_seconds: None,
+                max_batch_events: Some(config.max_batch_events),
+            };
+            return write_json_response(&mut stream, if conflict { 409 } else { 503 }, &response);
+        }
+    };
+    ACCEPTED.fetch_add(newly_persisted as u64, Ordering::Relaxed);
+    DUPLICATE.fetch_add(
+        (batch.events.len() - newly_persisted) as u64,
+        Ordering::Relaxed,
+    );
     let response = IngestResponse {
         accepted: true,
         accepted_events: batch.events.len(),
@@ -365,6 +402,8 @@ fn write_json_response<T: serde::Serialize>(
         202 => "Accepted",
         401 => "Unauthorized",
         400 => "Bad Request",
+        409 => "Conflict",
+        503 => "Service Unavailable",
         404 => "Not Found",
         429 => "Too Many Requests",
         413 => "Payload Too Large",

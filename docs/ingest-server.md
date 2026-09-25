@@ -41,7 +41,8 @@ target/crustacian-ingest/telemetry.sqlite3
 
 The `(endpoint_id, event_id)` primary key deduplicates replayed batches. The
 server acknowledges only after the transaction commits. `GET /health` checks
-the database and reports `durable_events`; it returns 503 if the store cannot
+the database and reports `durable_events` plus process counters for accepted,
+duplicate, rejected, and malformed events; it returns 503 if the store cannot
 be opened. Existing `telemetry.ndjson` files require an explicit import:
 
 ```bash
