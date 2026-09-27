@@ -1,7 +1,8 @@
 use crate::edr_transport::IngestBatch;
+use fs2::FileExt;
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde_json::Value;
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, BufReader};
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -13,6 +14,15 @@ fn io_error(error: impl std::error::Error + Send + Sync + 'static) -> io::Error 
 fn open(data_dir: &Path, allow_legacy: bool) -> io::Result<Connection> {
     std::fs::create_dir_all(data_dir)?;
     let db = data_dir.join("telemetry.sqlite3");
+    // Schema creation and WAL negotiation are write operations. Serializing
+    // them across processes avoids SQLITE_BUSY during concurrent first use.
+    let init_lock = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(data_dir.join("telemetry.sqlite3.init.lock"))?;
+    init_lock.lock_exclusive()?;
     if !allow_legacy && data_dir.join("telemetry.ndjson").exists() && !db.exists() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -31,6 +41,7 @@ fn open(data_dir: &Path, allow_legacy: bool) -> io::Result<Connection> {
         CREATE INDEX IF NOT EXISTS events_accepted ON events(accepted_ms);",
     )
     .map_err(io_error)?;
+    FileExt::unlock(&init_lock)?;
     Ok(conn)
 }
 
