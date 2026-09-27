@@ -122,6 +122,10 @@ POST https://ingest.example.com/v1/ingest
 GET  http://127.0.0.1:8080/health
 ```
 
+Remote endpoint shipping requires HTTPS. The ingest process binds to loopback
+behind a TLS reverse proxy and supports an endpoint-specific bearer-token file;
+see [ingest deployment](docs/ingest-server.md#authenticated-remote-deployment).
+
 When `CRUSTACIAN_INGEST_TOKEN` or `--bearer-token` is configured, ingest
 requests must include `Authorization: Bearer <token>`. `GET /health` remains
 available for local liveness checks.

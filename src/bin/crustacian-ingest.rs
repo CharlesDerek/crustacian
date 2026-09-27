@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::env;
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -25,6 +26,7 @@ struct ServerConfig {
     max_in_flight: usize,
     retry_after_seconds: u64,
     bearer_token: Option<String>,
+    endpoint_tokens: Option<Arc<HashMap<String, String>>>,
 }
 
 fn main() -> io::Result<()> {
@@ -47,7 +49,7 @@ fn main() -> io::Result<()> {
         }
         return Ok(());
     }
-    let config = parse_args();
+    let config = parse_args()?;
     let listener = TcpListener::bind(&config.bind)?;
     println!("Crustacian ingest server listening on {}", config.bind);
 
@@ -66,7 +68,7 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-fn parse_args() -> ServerConfig {
+fn parse_args() -> io::Result<ServerConfig> {
     let mut bind =
         env::var("CRUSTACIAN_INGEST_BIND").unwrap_or_else(|_| "127.0.0.1:8080".to_string());
     let mut data_dir = env::var("CRUSTACIAN_INGEST_DATA_DIR")
@@ -87,6 +89,7 @@ fn parse_args() -> ServerConfig {
     let mut bearer_token = env::var("CRUSTACIAN_INGEST_TOKEN")
         .ok()
         .and_then(non_empty_string);
+    let mut endpoint_tokens_file = env::var("CRUSTACIAN_ENDPOINT_TOKENS_FILE").ok();
 
     let mut args = env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -112,20 +115,94 @@ fn parse_args() -> ServerConfig {
                     .unwrap_or(retry_after_seconds);
             }
             "--bearer-token" => {
-                bearer_token = args.next().and_then(non_empty_string);
+                bearer_token = Some(args.next().and_then(non_empty_string).ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "--bearer-token requires a nonempty value",
+                    )
+                })?);
             }
-            _ => {}
+            "--endpoint-tokens-file" => {
+                endpoint_tokens_file = Some(
+                    args.next()
+                        .filter(|value| !value.is_empty())
+                        .ok_or_else(|| {
+                            io::Error::new(
+                                io::ErrorKind::InvalidInput,
+                                "--endpoint-tokens-file requires a path",
+                            )
+                        })?,
+                )
+            }
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "unknown ingest option",
+                ))
+            }
         }
     }
 
-    ServerConfig {
+    let address: std::net::SocketAddr = bind.parse().map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "bind must be a numeric socket address",
+        )
+    })?;
+    if !address.ip().is_loopback() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "ingest must bind to loopback behind a TLS reverse proxy",
+        ));
+    }
+    if bearer_token.is_some() && endpoint_tokens_file.is_some() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "choose shared token or endpoint token file",
+        ));
+    }
+    let endpoint_tokens = endpoint_tokens_file
+        .map(|path| -> io::Result<Arc<HashMap<String, String>>> {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if std::fs::metadata(&path)?.permissions().mode() & 0o077 != 0 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::PermissionDenied,
+                        "endpoint token file must be owner-only",
+                    ));
+                }
+            }
+            let bytes = std::fs::read(path)?;
+            let tokens: HashMap<String, String> = serde_json::from_slice(&bytes)?;
+            let unique = tokens
+                .values()
+                .collect::<std::collections::HashSet<_>>()
+                .len()
+                == tokens.len();
+            if tokens.is_empty()
+                || !unique
+                || tokens
+                    .iter()
+                    .any(|(id, token)| id.len() < 3 || token.len() < 32 || token.trim() != token)
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "endpoint token file needs nonempty IDs and tokens of at least 32 bytes",
+                ));
+            }
+            Ok(Arc::new(tokens))
+        })
+        .transpose()?;
+    Ok(ServerConfig {
         bind,
         data_dir,
         max_batch_events,
         max_in_flight,
         retry_after_seconds,
         bearer_token,
-    }
+        endpoint_tokens,
+    })
 }
 
 fn handle_connection(
@@ -199,7 +276,9 @@ fn handle_connection(
         return write_json_response(&mut stream, 404, &response);
     }
 
-    if !authorized_ingest_request(&request_text, config.bearer_token.as_deref()) {
+    if config.endpoint_tokens.is_none()
+        && !authorized_ingest_request(&request_text, config.bearer_token.as_deref())
+    {
         REJECTED.fetch_add(1, Ordering::Relaxed);
         let response = IngestResponse {
             accepted: false,
@@ -239,6 +318,20 @@ fn handle_connection(
         return write_json_response(&mut stream, 400, &response);
     }
 
+    if let Some(tokens) = &config.endpoint_tokens {
+        if !authorized_endpoint_request(&request_text, &batch.endpoint_id, tokens) {
+            REJECTED.fetch_add(1, Ordering::Relaxed);
+            let response = IngestResponse {
+                accepted: false,
+                accepted_events: 0,
+                message: "endpoint authentication failed".into(),
+                retry_after_seconds: None,
+                max_batch_events: Some(config.max_batch_events),
+            };
+            return write_json_response(&mut stream, 401, &response);
+        }
+    }
+
     let newly_persisted = match write_accepted_events(&config.data_dir, &batch) {
         Ok(count) => count,
         Err(error) => {
@@ -273,6 +366,16 @@ fn handle_connection(
         max_batch_events: Some(config.max_batch_events),
     };
     write_json_response(&mut stream, 202, &response)
+}
+
+fn authorized_endpoint_request(
+    request: &str,
+    endpoint_id: &str,
+    tokens: &HashMap<String, String>,
+) -> bool {
+    tokens
+        .get(endpoint_id)
+        .is_some_and(|token| authorized_ingest_request(request, Some(token)))
 }
 
 fn non_empty_string(value: String) -> Option<String> {
@@ -506,6 +609,30 @@ mod tests {
         assert!(authorized_ingest_request(
             "POST /v1/ingest HTTP/1.1\r\n\r\n{}",
             Some("  ")
+        ));
+    }
+
+    #[test]
+    fn endpoint_token_is_scoped_and_revocable() {
+        let mut tokens = HashMap::from([
+            ("endpoint-1".to_string(), "a".repeat(32)),
+            ("endpoint-2".to_string(), "b".repeat(32)),
+        ]);
+        let request = format!(
+            "POST /v1/ingest HTTP/1.1\r\nAuthorization: Bearer {}\r\n\r\n",
+            "a".repeat(32)
+        );
+        assert!(authorized_endpoint_request(&request, "endpoint-1", &tokens));
+        assert!(!authorized_endpoint_request(
+            &request,
+            "endpoint-2",
+            &tokens
+        ));
+        tokens.remove("endpoint-1");
+        assert!(!authorized_endpoint_request(
+            &request,
+            "endpoint-1",
+            &tokens
         ));
     }
 

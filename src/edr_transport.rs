@@ -795,10 +795,22 @@ fn post_json_https(
     bearer_token: Option<&str>,
     body: &[u8],
 ) -> io::Result<(u16, Vec<u8>)> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()
-        .map_err(io::Error::other)?;
+    let mut builder = reqwest::blocking::Client::builder().timeout(Duration::from_secs(30));
+    if let Ok(path) = std::env::var("CRUSTACIAN_INGEST_CA_PEM") {
+        let pem = fs::read(path)?;
+        builder = builder
+            .add_root_certificate(reqwest::Certificate::from_pem(&pem).map_err(io::Error::other)?);
+    }
+    if let (Ok(cert_path), Ok(key_path)) = (
+        std::env::var("CRUSTACIAN_CLIENT_CERT_PEM"),
+        std::env::var("CRUSTACIAN_CLIENT_KEY_PEM"),
+    ) {
+        let cert = fs::read(cert_path)?;
+        let key = fs::read(key_path)?;
+        builder = builder
+            .identity(reqwest::Identity::from_pkcs8_pem(&cert, &key).map_err(io::Error::other)?);
+    }
+    let client = builder.build().map_err(io::Error::other)?;
     let mut request = client
         .post(&target.url)
         .header(reqwest::header::CONTENT_TYPE, "application/json")
@@ -918,42 +930,50 @@ fn clamp_duration(value: Duration, max: Duration) -> Duration {
 }
 
 fn parse_http_url(url: &str) -> io::Result<HttpTarget> {
-    let (scheme, without_scheme, default_port) =
-        if let Some(without_scheme) = url.strip_prefix("http://") {
-            ("http", without_scheme, 80)
-        } else if let Some(without_scheme) = url.strip_prefix("https://") {
-            ("https", without_scheme, 443)
-        } else {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "only http:// and https:// ingest URLs are supported by the built-in sender",
-            ));
-        };
-    let (host_port, path) = without_scheme
-        .split_once('/')
-        .map(|(host, path)| (host, format!("/{path}")))
-        .unwrap_or((without_scheme, "/v1/ingest".to_string()));
-    let (host, port) = host_port
-        .split_once(':')
-        .map(|(host, port)| {
-            (
-                host.to_string(),
-                port.parse::<u16>().unwrap_or(default_port),
-            )
-        })
-        .unwrap_or((host_port.to_string(), default_port));
-
-    if host.trim().is_empty() {
+    let parsed = reqwest::Url::parse(url)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid ingest URL"))?;
+    if !matches!(parsed.scheme(), "http" | "https")
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "ingest URL host is empty",
+            "unsupported ingest URL",
         ));
     }
-
+    let parsed_host = parsed
+        .host_str()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "ingest URL host is empty"))?;
+    if parsed.scheme() == "http" && !matches!(parsed_host, "localhost" | "127.0.0.1" | "::1") {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "remote ingest requires HTTPS",
+        ));
+    }
+    let scheme = parsed.scheme().to_string();
+    let host = parsed_host.to_string();
+    let port = parsed
+        .port_or_known_default()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid ingest URL port"))?;
+    let path = if parsed.path() == "/" {
+        "/v1/ingest".to_string()
+    } else {
+        parsed.path().to_string()
+    };
+    let bracketed_host = if host.contains(':') {
+        format!("[{host}]")
+    } else {
+        host.clone()
+    };
+    let host_port = parsed.port().map_or(bracketed_host.clone(), |explicit| {
+        format!("{bracketed_host}:{explicit}")
+    });
     let normalized_url = format!("{scheme}://{host_port}{path}");
 
     Ok(HttpTarget {
-        scheme: scheme.to_string(),
+        scheme,
         host,
         port,
         path,
@@ -1167,6 +1187,8 @@ mod tests {
     #[test]
     fn rejects_unsupported_ingest_url_scheme() {
         assert!(parse_http_url("ftp://example.com").is_err());
+        assert!(parse_http_url("http://ingest.example.com/v1/ingest").is_err());
+        assert!(parse_http_url("https://user:secret@ingest.example.com/v1/ingest").is_err());
     }
 
     #[test]

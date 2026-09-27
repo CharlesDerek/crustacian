@@ -33,6 +33,30 @@ Authorization: Bearer <token>
 Requests missing the configured token, or using a different token, receive HTTP
 `401`. `GET /health` does not require the bearer token.
 
+## Authenticated remote deployment
+
+The server binds only to a numeric loopback address. Put a TLS reverse proxy
+on the same host in front of it for remote endpoints. Configure the proxy to
+verify client certificates when using mTLS, allow only `/v1/ingest` and
+`/health`, and forward to `127.0.0.1:8080`. Keep the direct listener unavailable
+from the network.
+
+For per-endpoint identity, provide `--endpoint-tokens-file /private/tokens.json`
+or `CRUSTACIAN_ENDPOINT_TOKENS_FILE`. The JSON object maps endpoint IDs to
+unique random bearer tokens of at least 32 bytes. A batch must present the
+token assigned to its `endpoint_id`; an unknown or revoked ID is rejected.
+Tokens must be distinct, and on Unix the file must have owner-only permissions
+(for example, `chmod 600`).
+Reload the server after rotating the file. This mode cannot be combined with
+the shared bearer token setting. Never commit the token file.
+
+The sender refuses remote `http://` URLs. Set `CRUSTACIAN_INGEST_URL` to the
+proxy's `https://` address and set the endpoint's token. Private CAs can be
+provided with `CRUSTACIAN_INGEST_CA_PEM`; a client certificate and PKCS#8 key
+can be supplied with `CRUSTACIAN_CLIENT_CERT_PEM` and
+`CRUSTACIAN_CLIENT_KEY_PEM`. Normal TLS hostname validation remains enabled.
+Loopback HTTP remains available for local tests.
+
 Accepted events are committed to:
 
 ```text
